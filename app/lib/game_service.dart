@@ -25,6 +25,8 @@ String resolveServerUrl() {
 
 enum Conn { connecting, online, offline }
 
+enum AppView { lobby, rooms, table }
+
 /// Holds all client state and talks the WebSocket protocol. Widgets listen via
 /// [ChangeNotifier]; the UI never touches the socket directly.
 class GameService extends ChangeNotifier {
@@ -57,7 +59,14 @@ class GameService extends ChangeNotifier {
   int chip = 50;
   final List<int> chips = const [10, 50, 100, 250];
 
-  bool get canBet => phase == 'betting' && conn == Conn.online;
+  // --- navigation ---
+  AppView view = AppView.lobby;
+  List<GameInfo> games = [];
+  List<RoomInfo> rooms = [];
+  String? roomId; // current room (null = not in a room)
+  String roomName = '';
+
+  bool get canBet => phase == 'betting' && conn == Conn.online && roomId != null;
 
   Future<void> start() => _connect();
 
@@ -118,6 +127,7 @@ class GameService extends ChangeNotifier {
 
   /// Return to the login screen. Next login rebinds this socket on the server.
   void logout() {
+    if (roomId != null) _send({'t': 'leaveRoom'});
     _sessionToken = null;
     loggedIn = false;
     authError = null;
@@ -125,6 +135,48 @@ class GameService extends ChangeNotifier {
     name = '';
     phase = 'idle';
     feed.clear();
+    view = AppView.lobby;
+    games = [];
+    rooms = [];
+    roomId = null;
+    notifyListeners();
+  }
+
+  // --- lobby / rooms navigation ---
+  void selectGame(String gameId) {
+    rooms = [];
+    view = AppView.rooms;
+    notifyListeners();
+    _send({'t': 'listRooms', 'gameId': gameId});
+  }
+
+  void refreshRooms() => _send({'t': 'listRooms', 'gameId': 'baccarat'});
+
+  void joinRoom(String id) {
+    if (conn != Conn.online) return;
+    _send({'t': 'joinRoom', 'roomId': id}); // view switches on 'roomJoined'
+  }
+
+  void leaveRoom() {
+    if (roomId != null) _send({'t': 'leaveRoom'});
+    roomId = null;
+    roomName = '';
+    phase = 'idle';
+    player = null;
+    banker = null;
+    outcome = null;
+    feed.clear();
+    view = AppView.rooms;
+    notifyListeners();
+    refreshRooms();
+  }
+
+  void backToLobby() {
+    if (roomId != null) {
+      _send({'t': 'leaveRoom'});
+      roomId = null;
+    }
+    view = AppView.lobby;
     notifyListeners();
   }
 
@@ -135,7 +187,12 @@ class GameService extends ChangeNotifier {
 
   Future<void> _onMessage(dynamic data) async {
     final m = jsonDecode(data as String) as Map<String, dynamic>;
-    switch (m['t']) {
+    final t = m['t'];
+    // Ignore room events that aren't for the room we're currently in.
+    if ((t == 'open' || t == 'locked' || t == 'settled' || t == 'bet') && m['roomId'] != roomId) {
+      return;
+    }
+    switch (t) {
       case 'session':
         if (m['token'] != null) _sessionToken = m['token'] as String;
         loggedIn = true;
@@ -144,17 +201,34 @@ class GameService extends ChangeNotifier {
         playerId = m['playerId'] as String;
         name = m['name'] as String;
         balance = m['balance'] as int;
-        minBet = m['limits']['minBet'] as int;
-        maxBet = m['limits']['maxBet'] as int;
-        phase = m['phase'] as String;
-        endsAt = (m['endsAt'] ?? 0) as int;
-        roadmap = Roadmap.fromJson(m['roadmap'] as Map<String, dynamic>);
+        games = (m['games'] as List).map((g) => GameInfo.fromJson(g as Map<String, dynamic>)).toList();
+        view = AppView.lobby;
+        roomId = null;
         break;
       case 'authError':
         authError = m['message'] as String?;
         authPending = false;
         loggedIn = false; // back to the login screen (e.g. expired session)
         _sessionToken = null;
+        view = AppView.lobby;
+        roomId = null;
+        break;
+      case 'rooms':
+        rooms = (m['rooms'] as List).map((r) => RoomInfo.fromJson(r as Map<String, dynamic>)).toList();
+        break;
+      case 'roomJoined':
+        roomId = m['roomId'] as String;
+        roomName = m['name'] as String;
+        minBet = m['minBet'] as int;
+        maxBet = m['maxBet'] as int;
+        phase = m['phase'] as String;
+        endsAt = (m['endsAt'] ?? 0) as int;
+        roadmap = Roadmap.fromJson(m['roadmap'] as Map<String, dynamic>);
+        player = null;
+        banker = null;
+        outcome = null;
+        feed.clear();
+        view = AppView.table;
         break;
       case 'open':
         phase = 'betting';

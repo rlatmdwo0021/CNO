@@ -1,5 +1,8 @@
 // Wire protocol between the WebSocket server and clients.
 // Messages are JSON with a `t` (type) discriminator.
+//
+// Flow: login/register -> session (with game list) -> listRooms -> joinRoom
+//       -> room snapshot + room-scoped open/locked/settled/bet events.
 
 import type { BetType } from './types.ts';
 import type { BeadCell, BigRoadCell, DerivedRoad } from './roadmap.ts';
@@ -10,6 +13,21 @@ export interface RoadmapView {
   bigEye: DerivedRoad;
   small: DerivedRoad;
   cockroach: DerivedRoad;
+}
+
+export interface GameInfo {
+  id: string;
+  name: string;
+  status: 'live' | 'soon';
+}
+
+export interface RoomInfo {
+  id: string;
+  name: string;
+  minBet: number;
+  maxBet: number;
+  players: number;
+  phase: string;
 }
 
 // ---- client -> server ----
@@ -29,12 +47,30 @@ export interface AuthMsg {
   t: 'auth';
   token: string;
 }
+export interface ListRoomsMsg {
+  t: 'listRooms';
+  gameId: string;
+}
+export interface JoinRoomMsg {
+  t: 'joinRoom';
+  roomId: string;
+}
+export interface LeaveRoomMsg {
+  t: 'leaveRoom';
+}
 export interface BetMsg {
   t: 'bet';
   betType: BetType;
   amount: number;
 }
-export type ClientMsg = RegisterMsg | LoginMsg | AuthMsg | BetMsg;
+export type ClientMsg =
+  | RegisterMsg
+  | LoginMsg
+  | AuthMsg
+  | ListRoomsMsg
+  | JoinRoomMsg
+  | LeaveRoomMsg
+  | BetMsg;
 
 // ---- server -> client ----
 export interface CardView {
@@ -57,26 +93,40 @@ export interface SessionMsg {
   t: 'session';
   playerId: string;
   name: string;
-  /** Present only right after register — the client persists it for reconnect. */
+  /** Present only right after register/login — kept in memory for reconnect. */
   token?: string;
   balance: number;
-  limits: { minBet: number; maxBet: number };
-  phase: string;
-  roundId?: string;
-  endsAt?: number; // betting window end (epoch ms), if currently betting
-  roadmap: RoadmapView; // current roads so late joiners see history
+  games: GameInfo[];
 }
 export interface AuthErrorMsg {
   t: 'authError';
   message: string;
 }
+export interface RoomsMsg {
+  t: 'rooms';
+  gameId: string;
+  rooms: RoomInfo[];
+}
+export interface RoomJoinedMsg {
+  t: 'roomJoined';
+  roomId: string;
+  name: string;
+  minBet: number;
+  maxBet: number;
+  phase: string;
+  roundId?: string;
+  endsAt?: number;
+  roadmap: RoadmapView;
+}
 export interface OpenMsg {
   t: 'open';
+  roomId: string;
   roundId: string;
   endsAt: number;
 }
 export interface BetBroadcastMsg {
   t: 'bet';
+  roomId: string;
   roundId: string;
   playerId: string;
   betType: BetType;
@@ -91,16 +141,18 @@ export interface BetAckMsg {
 }
 export interface LockedMsg {
   t: 'locked';
+  roomId: string;
   roundId: string;
 }
 export interface SettledMsg {
   t: 'settled';
+  roomId: string;
   roundId: string;
   outcome: 'player' | 'banker' | 'tie';
   player: HandView;
   banker: HandView;
   settled: SettledBetView[];
-  roadmap: RoadmapView; // roads updated with this round
+  roadmap: RoadmapView;
 }
 /** Per-recipient balance update (sent privately after settlement). */
 export interface BalanceMsg {
@@ -114,6 +166,8 @@ export interface ErrorMsg {
 export type ServerMsg =
   | SessionMsg
   | AuthErrorMsg
+  | RoomsMsg
+  | RoomJoinedMsg
   | OpenMsg
   | BetBroadcastMsg
   | BetAckMsg
@@ -148,6 +202,16 @@ export function parseClientMsg(raw: string): ClientMsg | null {
   if (msg.t === 'auth') {
     if (typeof msg.token !== 'string') return null;
     return { t: 'auth', token: msg.token };
+  }
+  if (msg.t === 'listRooms') {
+    return { t: 'listRooms', gameId: typeof msg.gameId === 'string' ? msg.gameId : 'baccarat' };
+  }
+  if (msg.t === 'joinRoom') {
+    if (typeof msg.roomId !== 'string') return null;
+    return { t: 'joinRoom', roomId: msg.roomId };
+  }
+  if (msg.t === 'leaveRoom') {
+    return { t: 'leaveRoom' };
   }
   if (msg.t === 'bet') {
     if (typeof msg.betType !== 'string' || typeof msg.amount !== 'number') return null;

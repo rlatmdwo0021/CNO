@@ -76,34 +76,30 @@ class _TableScreenState extends State<TableScreen> {
         ? '● 온라인'
         : (s.conn == Conn.connecting ? '○ 연결 중' : '○ 끊김');
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
+        IconButton(
+          onPressed: s.leaveRoom,
+          icon: const Icon(Icons.arrow_back, color: Colors.white70),
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(),
+          tooltip: '방 나가기',
+        ),
+        const SizedBox(width: 8),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('🃏 Baccarat',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              Text('${s.name.isEmpty ? '...' : s.name} · $connText',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70)),
+              Text('🃏 ${s.roomName}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('한도 ${s.minBet}~${s.maxBet} · $connText',
+                  style: const TextStyle(fontSize: 11, color: Colors.white70)),
             ],
           ),
         ),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text('${s.balance}',
-                style: const TextStyle(
-                    fontSize: 26, fontWeight: FontWeight.bold, color: goldColor)),
-            TextButton(
-              onPressed: s.logout,
-              style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                  minimumSize: const Size(0, 28)),
-              child: const Text('로그아웃', style: TextStyle(fontSize: 11)),
-            ),
-          ],
-        ),
+        Text('${s.balance}',
+            style: const TextStyle(
+                fontSize: 24, fontWeight: FontWeight.bold, color: goldColor)),
       ],
     );
   }

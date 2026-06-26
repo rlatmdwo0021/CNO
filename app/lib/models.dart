@@ -1,5 +1,33 @@
 // Plain data models parsed from the server's JSON protocol.
 
+class GameInfo {
+  final String id;
+  final String name;
+  final String status; // live | soon
+  GameInfo(this.id, this.name, this.status);
+  factory GameInfo.fromJson(Map<String, dynamic> j) =>
+      GameInfo(j['id'] as String, j['name'] as String, j['status'] as String);
+  bool get isLive => status == 'live';
+}
+
+class RoomInfo {
+  final String id;
+  final String name;
+  final int minBet;
+  final int maxBet;
+  final int players;
+  final String phase;
+  RoomInfo(this.id, this.name, this.minBet, this.maxBet, this.players, this.phase);
+  factory RoomInfo.fromJson(Map<String, dynamic> j) => RoomInfo(
+        j['id'] as String,
+        j['name'] as String,
+        j['minBet'] as int,
+        j['maxBet'] as int,
+        j['players'] as int,
+        j['phase'] as String,
+      );
+}
+
 class CardView {
   final String rank;
   final String suit; // S H D C

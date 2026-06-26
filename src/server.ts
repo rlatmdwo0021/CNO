@@ -20,13 +20,12 @@ import { AuthService, AuthError, InMemoryAccountStore, type AccountStore } from 
 import { SqliteAccountStore } from './sqliteAccounts.ts';
 import { Table, type TableLimits } from './round.ts';
 import { GameLoop } from './gameLoop.ts';
-import { parseClientMsg, type ServerMsg, type RoadmapView } from './protocol.ts';
+import { parseClientMsg, type ServerMsg, type RoadmapView, type GameInfo } from './protocol.ts';
 import { beadPlate, bigRoad, derivedRoads, summarize, type RoundSummary } from './roadmap.ts';
 import type { Card } from './types.ts';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const WELCOME_COINS = 1000;
-const LIMITS: TableLimits = { minBet: 10, maxBet: 500 };
 
 // ---- wallet selection ----
 // WALLET=memory  -> volatile (default if you want a clean slate each run)
@@ -67,32 +66,62 @@ async function createAccountStore(): Promise<AccountStore> {
   return new SqliteAccountStore(path);
 }
 
-// ---- game wiring ----
+// ---- games & rooms ----
 const wallet = await createWallet();
 const auth = new AuthService(await createAccountStore());
-const shoe = new Shoe(8, secureRng);
-const table = new Table(shoe, wallet, LIMITS);
-const loop = new GameLoop(table, {
+
+const GAMES: GameInfo[] = [
+  { id: 'baccarat', name: '바카라', status: 'live' },
+  { id: 'slots', name: '슬롯', status: 'soon' },
+  { id: 'blackjack', name: '블랙잭', status: 'soon' },
+];
+
+// Fixed preset rooms by betting limit. Each is an independent table/loop/shoe.
+const ROOM_CONFIGS = [
+  { id: 'beginner', name: '초보', minBet: 10, maxBet: 500 },
+  { id: 'standard', name: '일반', minBet: 100, maxBet: 5000 },
+  { id: 'vip', name: 'VIP', minBet: 1000, maxBet: 50000 },
+];
+const TIMING = {
   bettingMs: Number(process.env.BETTING_MS ?? 8000),
   settleDelayMs: Number(process.env.SETTLE_DELAY_MS ?? 1200),
   pauseMs: Number(process.env.PAUSE_MS ?? 4000),
-});
+};
+
+interface Room {
+  id: string;
+  name: string;
+  gameId: string;
+  limits: TableLimits;
+  loop: GameLoop;
+  history: RoundSummary[];
+  subscribers: Set<WebSocket>;
+}
 
 // ---- connections ----
 const clients = new Map<WebSocket, string>(); // socket -> playerId (authenticated)
+const subscriptions = new Map<WebSocket, string>(); // socket -> current roomId
 
 const send = (ws: WebSocket, msg: ServerMsg) => {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 };
-const broadcast = (msg: ServerMsg) => {
-  for (const ws of clients.keys()) send(ws, msg);
-};
 const cardView = (cards: Card[]) => cards.map((c) => ({ rank: c.rank, suit: c.suit }));
 
-// Round history feeds the roadmaps. Keep a rolling window for the display.
+const broadcastRoom = (room: Room, msg: ServerMsg) => {
+  for (const ws of room.subscribers) send(ws, msg);
+};
+const roomPlayers = (room: Room): number => {
+  const ids = new Set<string>();
+  for (const ws of room.subscribers) {
+    const p = clients.get(ws);
+    if (p) ids.add(p);
+  }
+  return ids.size;
+};
+
+// Each room derives its roadmaps from its own rolling round history.
 const HISTORY_WINDOW = 60;
-const history: RoundSummary[] = [];
-const buildRoadmap = (): RoadmapView => {
+const buildRoadmap = (history: RoundSummary[]): RoadmapView => {
   const recent = history.slice(-HISTORY_WINDOW);
   const derived = derivedRoads(recent);
   return {
@@ -104,40 +133,73 @@ const buildRoadmap = (): RoadmapView => {
   };
 };
 
-// ---- loop events -> broadcasts ----
-loop.on('open', ({ roundId, endsAt }) => broadcast({ t: 'open', roundId, endsAt }));
-loop.on('locked', ({ roundId }) => broadcast({ t: 'locked', roundId }));
-loop.on('bet', ({ roundId, placed }) =>
-  broadcast({
-    t: 'bet',
-    roundId,
-    playerId: placed.playerId,
-    betType: placed.bet.type,
-    amount: placed.bet.amount,
-  }),
-);
-loop.on('settled', async (outcome) => {
-  history.push(summarize(outcome.result));
-  broadcast({
-    t: 'settled',
-    roundId: outcome.roundId,
-    outcome: outcome.result.outcome,
-    player: { cards: cardView(outcome.result.player.cards), value: outcome.result.player.value },
-    banker: { cards: cardView(outcome.result.banker.cards), value: outcome.result.banker.value },
-    settled: outcome.settled.map((s) => ({
-      playerId: s.playerId,
-      betType: s.bet.type,
-      amount: s.bet.amount,
-      won: s.settlement.won,
-      net: s.settlement.net,
-    })),
-    roadmap: buildRoadmap(),
+// Wire one room's loop events to room-scoped broadcasts.
+function wireRoom(room: Room): void {
+  room.loop.on('open', ({ roundId, endsAt }) =>
+    broadcastRoom(room, { t: 'open', roomId: room.id, roundId, endsAt }),
+  );
+  room.loop.on('locked', ({ roundId }) =>
+    broadcastRoom(room, { t: 'locked', roomId: room.id, roundId }),
+  );
+  room.loop.on('bet', ({ roundId, placed }) =>
+    broadcastRoom(room, {
+      t: 'bet',
+      roomId: room.id,
+      roundId,
+      playerId: placed.playerId,
+      betType: placed.bet.type,
+      amount: placed.bet.amount,
+    }),
+  );
+  room.loop.on('settled', async (outcome) => {
+    room.history.push(summarize(outcome.result));
+    if (room.history.length > HISTORY_WINDOW) room.history.shift();
+    broadcastRoom(room, {
+      t: 'settled',
+      roomId: room.id,
+      roundId: outcome.roundId,
+      outcome: outcome.result.outcome,
+      player: { cards: cardView(outcome.result.player.cards), value: outcome.result.player.value },
+      banker: { cards: cardView(outcome.result.banker.cards), value: outcome.result.banker.value },
+      settled: outcome.settled.map((s) => ({
+        playerId: s.playerId,
+        betType: s.bet.type,
+        amount: s.bet.amount,
+        won: s.settlement.won,
+        net: s.settlement.net,
+      })),
+      roadmap: buildRoadmap(room.history),
+    });
+    for (const ws of room.subscribers) {
+      const playerId = clients.get(ws);
+      if (playerId) send(ws, { t: 'balance', balance: await wallet.getBalance(playerId) });
+    }
   });
-  // Private balance update to each connected player.
-  for (const [ws, playerId] of clients) {
-    send(ws, { t: 'balance', balance: await wallet.getBalance(playerId) });
-  }
-});
+}
+
+const rooms = new Map<string, Room>();
+for (const cfg of ROOM_CONFIGS) {
+  const limits: TableLimits = { minBet: cfg.minBet, maxBet: cfg.maxBet };
+  const loop = new GameLoop(new Table(new Shoe(8, secureRng), wallet, limits), TIMING);
+  const room: Room = {
+    id: cfg.id,
+    name: cfg.name,
+    gameId: 'baccarat',
+    limits,
+    loop,
+    history: [],
+    subscribers: new Set(),
+  };
+  rooms.set(cfg.id, room);
+  wireRoom(room);
+}
+
+function leaveCurrentRoom(ws: WebSocket): void {
+  const roomId = subscriptions.get(ws);
+  if (!roomId) return;
+  rooms.get(roomId)?.subscribers.delete(ws);
+  subscriptions.delete(ws);
+}
 
 // ---- HTTP: serve the Flutter web client (app + WebSocket on one port) ----
 // Serving the app here means phones only need ONE reachable port: open
@@ -207,11 +269,7 @@ async function startSession(ws: WebSocket, playerId: string, name: string, token
     name,
     token,
     balance: await wallet.getBalance(playerId),
-    limits: { minBet: LIMITS.minBet, maxBet: LIMITS.maxBet },
-    phase: loop.phase,
-    roundId: loop.roundId,
-    endsAt: loop.phaseEndsAt || undefined,
-    roadmap: buildRoadmap(),
+    games: GAMES,
   });
 }
 
@@ -249,10 +307,58 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (msg.t === 'listRooms') {
+      if (!clients.get(ws)) return send(ws, { t: 'error', message: '먼저 로그인하세요.' });
+      send(ws, {
+        t: 'rooms',
+        gameId: msg.gameId,
+        rooms: [...rooms.values()]
+          .filter((r) => r.gameId === msg.gameId)
+          .map((r) => ({
+            id: r.id,
+            name: r.name,
+            minBet: r.limits.minBet,
+            maxBet: r.limits.maxBet,
+            players: roomPlayers(r),
+            phase: r.loop.phase,
+          })),
+      });
+      return;
+    }
+
+    if (msg.t === 'joinRoom') {
+      if (!clients.get(ws)) return send(ws, { t: 'error', message: '먼저 로그인하세요.' });
+      const room = rooms.get(msg.roomId);
+      if (!room) return send(ws, { t: 'error', message: '존재하지 않는 방입니다.' });
+      leaveCurrentRoom(ws);
+      room.subscribers.add(ws);
+      subscriptions.set(ws, room.id);
+      send(ws, {
+        t: 'roomJoined',
+        roomId: room.id,
+        name: room.name,
+        minBet: room.limits.minBet,
+        maxBet: room.limits.maxBet,
+        phase: room.loop.phase,
+        roundId: room.loop.roundId,
+        endsAt: room.loop.phaseEndsAt || undefined,
+        roadmap: buildRoadmap(room.history),
+      });
+      return;
+    }
+
+    if (msg.t === 'leaveRoom') {
+      leaveCurrentRoom(ws);
+      return;
+    }
+
     if (msg.t === 'bet') {
       const playerId = clients.get(ws);
-      if (!playerId) return send(ws, { t: 'error', message: 'authenticate first' });
-      const result = await loop.placeBet(playerId, { type: msg.betType, amount: msg.amount });
+      if (!playerId) return send(ws, { t: 'error', message: '먼저 로그인하세요.' });
+      const roomId = subscriptions.get(ws);
+      const room = roomId ? rooms.get(roomId) : undefined;
+      if (!room) return send(ws, { t: 'betAck', ok: false, error: '방에 입장한 뒤 베팅하세요.' });
+      const result = await room.loop.placeBet(playerId, { type: msg.betType, amount: msg.amount });
       send(ws, {
         t: 'betAck',
         ok: result.ok,
@@ -264,12 +370,15 @@ wss.on('connection', (ws) => {
     }
   });
 
-  ws.on('close', () => clients.delete(ws));
+  ws.on('close', () => {
+    leaveCurrentRoom(ws);
+    clients.delete(ws);
+  });
 });
 
 // Bind on all interfaces so phones on the same Wi-Fi can reach it.
 httpServer.listen(PORT, '0.0.0.0', () => {
-  loop.start();
+  for (const room of rooms.values()) room.loop.start();
   const nets = networkInterfaces();
   const lan = Object.values(nets)
     .flat()
