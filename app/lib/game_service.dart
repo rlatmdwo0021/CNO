@@ -2,17 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'models.dart';
 
-const String kTokenKey = 'casino_token';
-
 /// Resolve the WebSocket backend address.
 ///  - If SERVER_URL is provided at build time, use it (needed for native apps).
 ///  - On web, derive it from the page's own origin, so opening the app at
-///    http://<pc-ip>:8080 connects to ws://<pc-ip>:8080 — same host, same port.
+///    `http://PC-IP:8080` connects to `ws://PC-IP:8080` — same host, same port.
 ///    Phones therefore work with no rebuild: load the page, the socket follows.
 String resolveServerUrl() {
   const override = String.fromEnvironment('SERVER_URL');
@@ -33,6 +30,12 @@ enum Conn { connecting, online, offline }
 class GameService extends ChangeNotifier {
   WebSocketChannel? _ch;
   Conn conn = Conn.connecting;
+
+  // --- auth state ---
+  bool loggedIn = false;
+  bool authPending = false; // a login/register is in flight
+  String? authError; // last auth failure message (shown on the auth screen)
+  String? _sessionToken; // in-memory only; lets us re-auth on reconnect
 
   String? playerId;
   String name = '';
@@ -67,9 +70,9 @@ class GameService extends ChangeNotifier {
       ch.stream.listen(_onMessage, onDone: _onDone, onError: (_) => _onDone());
       await ch.ready;
       conn = Conn.online;
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString(kTokenKey);
-      _send(token != null ? {'t': 'auth', 'token': token} : {'t': 'register'});
+      // Reconnect within the same run: re-auth with the in-memory token.
+      // Otherwise wait for the user to log in / register on the AuthScreen.
+      if (_sessionToken != null) _send({'t': 'auth', 'token': _sessionToken});
       notifyListeners();
     } catch (_) {
       _onDone();
@@ -97,12 +100,32 @@ class GameService extends ChangeNotifier {
     _send({'t': 'bet', 'betType': type, 'amount': chip});
   }
 
-  Future<void> newAccount() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(kTokenKey);
+  void login(String username, String password) {
+    if (conn != Conn.online) return;
+    authPending = true;
+    authError = null;
+    notifyListeners();
+    _send({'t': 'login', 'username': username, 'password': password});
+  }
+
+  void register(String username, String password, String name) {
+    if (conn != Conn.online) return;
+    authPending = true;
+    authError = null;
+    notifyListeners();
+    _send({'t': 'register', 'username': username, 'password': password, 'name': name});
+  }
+
+  /// Return to the login screen. Next login rebinds this socket on the server.
+  void logout() {
+    _sessionToken = null;
+    loggedIn = false;
+    authError = null;
     playerId = null;
     name = '';
-    _send({'t': 'register'});
+    phase = 'idle';
+    feed.clear();
+    notifyListeners();
   }
 
   void _log(String s) {
@@ -114,10 +137,10 @@ class GameService extends ChangeNotifier {
     final m = jsonDecode(data as String) as Map<String, dynamic>;
     switch (m['t']) {
       case 'session':
-        if (m['token'] != null) {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString(kTokenKey, m['token'] as String);
-        }
+        if (m['token'] != null) _sessionToken = m['token'] as String;
+        loggedIn = true;
+        authPending = false;
+        authError = null;
         playerId = m['playerId'] as String;
         name = m['name'] as String;
         balance = m['balance'] as int;
@@ -128,9 +151,10 @@ class GameService extends ChangeNotifier {
         roadmap = Roadmap.fromJson(m['roadmap'] as Map<String, dynamic>);
         break;
       case 'authError':
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove(kTokenKey);
-        _send({'t': 'register'});
+        authError = m['message'] as String?;
+        authPending = false;
+        loggedIn = false; // back to the login screen (e.g. expired session)
+        _sessionToken = null;
         break;
       case 'open':
         phase = 'betting';

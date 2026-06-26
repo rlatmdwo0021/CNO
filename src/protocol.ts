@@ -15,9 +15,16 @@ export interface RoadmapView {
 // ---- client -> server ----
 export interface RegisterMsg {
   t: 'register';
-  /** Optional display name; a default is derived from the id if omitted. */
+  username: string;
+  password: string;
   name?: string;
 }
+export interface LoginMsg {
+  t: 'login';
+  username: string;
+  password: string;
+}
+/** Reconnect within the same run using the in-memory session token. */
 export interface AuthMsg {
   t: 'auth';
   token: string;
@@ -27,7 +34,7 @@ export interface BetMsg {
   betType: BetType;
   amount: number;
 }
-export type ClientMsg = RegisterMsg | AuthMsg | BetMsg;
+export type ClientMsg = RegisterMsg | LoginMsg | AuthMsg | BetMsg;
 
 // ---- server -> client ----
 export interface CardView {
@@ -126,7 +133,17 @@ export function parseClientMsg(raw: string): ClientMsg | null {
   if (typeof data !== 'object' || data === null) return null;
   const msg = data as Record<string, unknown>;
   if (msg.t === 'register') {
-    return { t: 'register', name: typeof msg.name === 'string' ? msg.name : undefined };
+    if (typeof msg.username !== 'string' || typeof msg.password !== 'string') return null;
+    return {
+      t: 'register',
+      username: msg.username,
+      password: msg.password,
+      name: typeof msg.name === 'string' ? msg.name : undefined,
+    };
+  }
+  if (msg.t === 'login') {
+    if (typeof msg.username !== 'string' || typeof msg.password !== 'string') return null;
+    return { t: 'login', username: msg.username, password: msg.password };
   }
   if (msg.t === 'auth') {
     if (typeof msg.token !== 'string') return null;

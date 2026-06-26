@@ -4,76 +4,82 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rmSync } from 'node:fs';
 
-import { AuthService, InMemoryAccountStore, hashToken } from '../src/auth.ts';
+import {
+  AuthService,
+  AuthError,
+  InMemoryAccountStore,
+  hashPassword,
+  verifyPassword,
+} from '../src/auth.ts';
 import { SqliteAccountStore } from '../src/sqliteAccounts.ts';
 
-test('register issues a token that authenticates back to the same account', async () => {
+test('register then login with the right password returns the same player', async () => {
   const auth = new AuthService(new InMemoryAccountStore());
-  const session = await auth.register('Alice');
-  assert.match(session.playerId, /^p_/);
-  assert.equal(session.name, 'Alice');
-  assert.ok(session.token.length >= 32);
+  const reg = await auth.register('alice', 'secret123', 'Alice');
+  assert.match(reg.playerId, /^p_/);
+  assert.equal(reg.name, 'Alice');
 
-  const acc = await auth.authenticate(session.token);
-  assert.ok(acc);
-  assert.equal(acc.playerId, session.playerId);
-  assert.equal(acc.name, 'Alice');
+  const login = await auth.login('alice', 'secret123');
+  assert.equal(login.playerId, reg.playerId);
+  assert.equal(login.name, 'Alice');
 });
 
-test('reconnect: the same token resolves to the same player across calls', async () => {
+test('duplicate username is rejected', async () => {
   const auth = new AuthService(new InMemoryAccountStore());
-  const { token, playerId } = await auth.register();
-  const first = await auth.authenticate(token);
-  const second = await auth.authenticate(token);
-  assert.equal(first?.playerId, playerId);
-  assert.equal(second?.playerId, playerId);
+  await auth.register('bob', 'password');
+  await assert.rejects(() => auth.register('bob', 'other'), AuthError);
 });
 
-test('an unknown or empty token is rejected (no impersonation)', async () => {
+test('wrong password and unknown user both fail to log in', async () => {
   const auth = new AuthService(new InMemoryAccountStore());
-  await auth.register();
-  assert.equal(await auth.authenticate('not-a-real-token'), null);
+  await auth.register('carol', 'correct-horse');
+  await assert.rejects(() => auth.login('carol', 'wrong'), AuthError);
+  await assert.rejects(() => auth.login('nobody', 'whatever'), AuthError);
+});
+
+test('short username or password is rejected', async () => {
+  const auth = new AuthService(new InMemoryAccountStore());
+  await assert.rejects(() => auth.register('ab', 'longenough'), AuthError);
+  await assert.rejects(() => auth.register('validname', '123'), AuthError);
+});
+
+test('default display name falls back to the username', async () => {
+  const auth = new AuthService(new InMemoryAccountStore());
+  const reg = await auth.register('dave', 'password');
+  assert.equal(reg.name, 'dave');
+});
+
+test('password is stored only as a salted hash', async () => {
+  const stored = hashPassword('hunter2');
+  assert.notEqual(stored, 'hunter2');
+  assert.match(stored, /^[0-9a-f]+:[0-9a-f]+$/);
+  assert.equal(verifyPassword('hunter2', stored), true);
+  assert.equal(verifyPassword('wrong', stored), false);
+});
+
+test('session token authenticates back to the account; bad token does not', async () => {
+  const auth = new AuthService(new InMemoryAccountStore());
+  const reg = await auth.register('erin', 'password');
+  const acc = await auth.authenticate(reg.token);
+  assert.equal(acc?.playerId, reg.playerId);
+  assert.equal(await auth.authenticate('not-a-token'), null);
   assert.equal(await auth.authenticate(''), null);
 });
 
-test('knowing only the playerId does not grant access', async () => {
-  const store = new InMemoryAccountStore();
-  const auth = new AuthService(store);
-  const { playerId } = await auth.register();
-  // The playerId is not a credential; only the token authenticates.
-  assert.equal(await auth.authenticate(playerId), null);
-});
-
-test('the store keeps only the token hash, never the raw token', async () => {
-  const store = new InMemoryAccountStore();
-  const auth = new AuthService(store);
-  const { token, playerId } = await auth.register();
-  const acc = await store.findById(playerId);
-  assert.notEqual(acc?.tokenHash, token);
-  assert.equal(acc?.tokenHash, hashToken(token));
-});
-
-test('default name is derived from the player id when none given', async () => {
-  const auth = new AuthService(new InMemoryAccountStore());
-  const session = await auth.register();
-  assert.match(session.name, /^Player-/);
-});
-
-test('[sqlite] accounts persist across a restart', async () => {
+test('[sqlite] accounts persist; login works after a restart', async () => {
   const file = join(tmpdir(), `baccarat-accounts-${process.pid}.db`);
   rmSync(file, { force: true });
   try {
     const store1 = new SqliteAccountStore(file);
-    const auth1 = new AuthService(store1);
-    const { token, playerId } = await auth1.register('Returning');
+    const reg = await new AuthService(store1).register('frank', 'password', 'Frank');
     store1.close();
 
-    // Reopen: the token still authenticates to the same account.
+    // Reopen: the password still verifies via a fresh login.
     const store2 = new SqliteAccountStore(file);
-    const auth2 = new AuthService(store2);
-    const acc = await auth2.authenticate(token);
-    assert.equal(acc?.playerId, playerId);
-    assert.equal(acc?.name, 'Returning');
+    const login = await new AuthService(store2).login('frank', 'password');
+    assert.equal(login.playerId, reg.playerId);
+    assert.equal(login.name, 'Frank');
+    await assert.rejects(() => new AuthService(store2).login('frank', 'nope'), AuthError);
     store2.close();
   } finally {
     rmSync(file, { force: true });

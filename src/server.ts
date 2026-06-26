@@ -16,7 +16,7 @@ import { Shoe } from './cards.ts';
 import { secureRng } from './rng.ts';
 import { InMemoryWallet, type WalletService } from './wallet.ts';
 import { SqliteWallet } from './sqliteWallet.ts';
-import { AuthService, InMemoryAccountStore, type AccountStore } from './auth.ts';
+import { AuthService, AuthError, InMemoryAccountStore, type AccountStore } from './auth.ts';
 import { SqliteAccountStore } from './sqliteAccounts.ts';
 import { Table, type TableLimits } from './round.ts';
 import { GameLoop } from './gameLoop.ts';
@@ -221,15 +221,31 @@ wss.on('connection', (ws) => {
     if (!msg) return send(ws, { t: 'error', message: 'malformed message' });
 
     if (msg.t === 'register') {
-      const session = await auth.register(msg.name);
-      await startSession(ws, session.playerId, session.name, session.token);
+      try {
+        const session = await auth.register(msg.username, msg.password, msg.name);
+        await startSession(ws, session.playerId, session.name, session.token);
+      } catch (err) {
+        send(ws, { t: 'authError', message: err instanceof AuthError ? err.message : '회원가입에 실패했습니다.' });
+      }
+      return;
+    }
+
+    if (msg.t === 'login') {
+      try {
+        const session = await auth.login(msg.username, msg.password);
+        await startSession(ws, session.playerId, session.name, session.token);
+      } catch (err) {
+        send(ws, { t: 'authError', message: err instanceof AuthError ? err.message : '로그인에 실패했습니다.' });
+      }
       return;
     }
 
     if (msg.t === 'auth') {
       const account = await auth.authenticate(msg.token);
-      if (!account) return send(ws, { t: 'authError', message: 'invalid or expired token' });
-      await startSession(ws, account.playerId, account.name);
+      if (!account) {
+        return send(ws, { t: 'authError', message: '세션이 만료되었습니다. 다시 로그인해주세요.' });
+      }
+      await startSession(ws, account.playerId, account.name); // reconnect: keep existing token
       return;
     }
 

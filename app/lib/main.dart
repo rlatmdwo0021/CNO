@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'auth_screen.dart';
 import 'game_service.dart';
 import 'table_screen.dart';
 import 'widgets.dart';
@@ -25,7 +26,11 @@ class BaccaratApp extends StatelessWidget {
         scaffoldBackgroundColor: feltColor,
         fontFamily: 'Roboto',
       ),
-      home: TableScreen(service),
+      home: ListenableBuilder(
+        listenable: service,
+        builder: (context, _) =>
+            service.loggedIn ? TableScreen(service) : AuthScreen(service),
+      ),
     );
   }
 }

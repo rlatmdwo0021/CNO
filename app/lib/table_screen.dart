@@ -96,11 +96,11 @@ class _TableScreenState extends State<TableScreen> {
                 style: const TextStyle(
                     fontSize: 26, fontWeight: FontWeight.bold, color: goldColor)),
             TextButton(
-              onPressed: s.newAccount,
+              onPressed: s.logout,
               style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                   minimumSize: const Size(0, 28)),
-              child: const Text('새 계정', style: TextStyle(fontSize: 11)),
+              child: const Text('로그아웃', style: TextStyle(fontSize: 11)),
             ),
           ],
         ),
