@@ -316,6 +316,15 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (msg.t === 'guest') {
+      if (process.env.ALLOW_GUEST === 'false') {
+        return send(ws, { t: 'authError', message: '게스트 로그인이 비활성화되어 있습니다.' });
+      }
+      const session = await auth.guestLogin();
+      await startSession(ws, session.playerId, session.name, session.token);
+      return;
+    }
+
     if (msg.t === 'listRooms') {
       if (!clients.get(ws)) return send(ws, { t: 'error', message: '먼저 로그인하세요.' });
       send(ws, {

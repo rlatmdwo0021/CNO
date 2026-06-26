@@ -95,6 +95,27 @@ export class AuthService {
     };
   }
 
+  /**
+   * Test-only guest login: log into a fixed account by username, creating it
+   * (with a random password the client never needs) if it doesn't exist yet.
+   * Idempotent and password-free — no login/register race. Gate in production.
+   */
+  async guestLogin(username = 'test', name = '테스터'): Promise<Session> {
+    let account = await this.store.findByUsername(username);
+    if (!account) {
+      const playerId = `p_${randomBytes(6).toString('hex')}`;
+      account = {
+        playerId,
+        username,
+        passwordHash: hashPassword(randomBytes(16).toString('hex')),
+        name,
+        createdAt: Date.now(),
+      };
+      await this.store.create(account);
+    }
+    return { playerId: account.playerId, name: account.name, token: this.issueToken(account.playerId) };
+  }
+
   /** Resolve a session token to its account, or null if unknown/expired. */
   async authenticate(token: string): Promise<Account | null> {
     const playerId = this.sessions.get(token ?? '');

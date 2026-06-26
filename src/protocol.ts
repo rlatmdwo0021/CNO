@@ -48,6 +48,10 @@ export interface AuthMsg {
   t: 'auth';
   token: string;
 }
+/** Test-only: instant login to a shared guest account. */
+export interface GuestMsg {
+  t: 'guest';
+}
 export interface ListRoomsMsg {
   t: 'listRooms';
   gameId: string;
@@ -68,6 +72,7 @@ export type ClientMsg =
   | RegisterMsg
   | LoginMsg
   | AuthMsg
+  | GuestMsg
   | ListRoomsMsg
   | JoinRoomMsg
   | LeaveRoomMsg
@@ -206,6 +211,9 @@ export function parseClientMsg(raw: string): ClientMsg | null {
   if (msg.t === 'auth') {
     if (typeof msg.token !== 'string') return null;
     return { t: 'auth', token: msg.token };
+  }
+  if (msg.t === 'guest') {
+    return { t: 'guest' };
   }
   if (msg.t === 'listRooms') {
     return { t: 'listRooms', gameId: typeof msg.gameId === 'string' ? msg.gameId : 'baccarat' };
