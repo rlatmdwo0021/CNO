@@ -10,23 +10,54 @@ class GameInfo {
   bool get isLive => status == 'live';
 }
 
+class RoomCounts {
+  final int player;
+  final int banker;
+  final int tie;
+  RoomCounts(this.player, this.banker, this.tie);
+  factory RoomCounts.fromJson(Map<String, dynamic> j) =>
+      RoomCounts(j['player'] ?? 0, j['banker'] ?? 0, j['tie'] ?? 0);
+}
+
+class RoomLastResult {
+  final String outcome;
+  final int playerValue;
+  final int bankerValue;
+  RoomLastResult(this.outcome, this.playerValue, this.bankerValue);
+  factory RoomLastResult.fromJson(Map<String, dynamic> j) =>
+      RoomLastResult(j['outcome'] as String, j['playerValue'] as int, j['bankerValue'] as int);
+}
+
 class RoomInfo {
   final String id;
   final String name;
+  final String gameId;
   final int minBet;
   final int maxBet;
   final int players;
   final String phase;
-  final List<String> recent; // recent outcomes (player/banker/tie) for preview
-  RoomInfo(this.id, this.name, this.minBet, this.maxBet, this.players, this.phase, this.recent);
+  final RoomCounts counts;
+  final RoomLastResult? lastResult;
+  final Roadmap roadmap;
+  final List<String>? recent; // roulette recent winning pockets
+  RoomInfo(this.id, this.name, this.gameId, this.minBet, this.maxBet, this.players, this.phase,
+      this.counts, this.lastResult, this.roadmap, this.recent);
   factory RoomInfo.fromJson(Map<String, dynamic> j) => RoomInfo(
         j['id'] as String,
         j['name'] as String,
+        (j['gameId'] ?? 'baccarat') as String,
         j['minBet'] as int,
         j['maxBet'] as int,
         j['players'] as int,
         j['phase'] as String,
-        ((j['recent'] ?? []) as List).cast<String>(),
+        RoomCounts.fromJson((j['counts'] ?? {}) as Map<String, dynamic>),
+        j['lastResult'] == null
+            ? null
+            : RoomLastResult.fromJson(j['lastResult'] as Map<String, dynamic>),
+        j['roadmap'] == null
+            ? Roadmap.empty()
+            : Roadmap.fromJson(j['roadmap'] as Map<String, dynamic>),
+        j['recent'] == null ? null : List<String>.from(j['recent'] as List),
       );
 }
 

@@ -19,6 +19,8 @@ import { SqliteWallet } from './sqliteWallet.ts';
 import { AuthService, AuthError, InMemoryAccountStore, type AccountStore } from './auth.ts';
 import { SqliteAccountStore } from './sqliteAccounts.ts';
 import { Table, type TableLimits } from './round.ts';
+import { RouletteTable } from './rouletteRound.ts';
+import type { Pocket, Color } from './rouletteEngine.ts';
 import { GameLoop } from './gameLoop.ts';
 import { parseClientMsg, type ServerMsg, type RoadmapView, type GameInfo } from './protocol.ts';
 import { beadPlate, bigRoad, derivedRoads, summarize, type RoundSummary } from './roadmap.ts';
@@ -72,8 +74,8 @@ const auth = new AuthService(await createAccountStore());
 
 const GAMES: GameInfo[] = [
   { id: 'baccarat', name: '바카라', status: 'live' },
+  { id: 'roulette', name: '룰렛', status: 'live' },
   { id: 'slots', name: '슬롯', status: 'soon' },
-  { id: 'roulette', name: '룰렛', status: 'soon' },
 ];
 const GRADE_PLACEHOLDER = '브론즈';
 
@@ -86,9 +88,20 @@ const ROOM_CONFIGS = [
   { id: 'standard', name: '일반', minBet: 100, maxBet: 5000, bettingMs: 8000, settleDelayMs: 1200, pauseMs: 4000 },
   { id: 'vip', name: 'VIP', minBet: 1000, maxBet: 50000, bettingMs: 6000, settleDelayMs: 1000, pauseMs: 3000 },
 ];
+// Roulette rooms: settleDelayMs is the wheel-spin animation window.
+const ROULETTE_ROOM_CONFIGS = [
+  { id: 'ro-beginner', name: '초보', minBet: 10, maxBet: 500, bettingMs: 15000, settleDelayMs: 4500, pauseMs: 5000 },
+  { id: 'ro-standard', name: '일반', minBet: 100, maxBet: 5000, bettingMs: 12000, settleDelayMs: 4500, pauseMs: 4000 },
+  { id: 'ro-vip', name: 'VIP', minBet: 1000, maxBet: 50000, bettingMs: 10000, settleDelayMs: 4500, pauseMs: 4000 },
+];
 const envNum = (key: string, fallback: number): number =>
   process.env[key] ? Number(process.env[key]) : fallback;
-const RECENT_RESULTS = 36; // recent outcomes sent per room for the lobby preview
+
+const countOutcomes = (history: RoundSummary[]) => {
+  const c = { player: 0, banker: 0, tie: 0 };
+  for (const h of history) c[h.outcome] += 1;
+  return c;
+};
 
 interface Room {
   id: string;
@@ -97,6 +110,9 @@ interface Room {
   limits: TableLimits;
   loop: GameLoop;
   history: RoundSummary[];
+  lastResult: { outcome: 'player' | 'banker' | 'tie'; playerValue: number; bankerValue: number } | null;
+  roHistory?: Pocket[]; // roulette: recent winning pockets, oldest first
+  roLast?: { winning: Pocket; color: Color } | null;
   subscribers: Set<WebSocket>;
 }
 
@@ -143,6 +159,13 @@ function wireRoom(room: Room): void {
   room.loop.on('locked', ({ roundId }) =>
     broadcastRoom(room, { t: 'locked', roomId: room.id, roundId }),
   );
+  room.loop.on('betsCleared', ({ roundId, playerId, byType }) =>
+    broadcastRoom(room, { t: 'betsCleared', roomId: room.id, roundId, playerId, byType }),
+  );
+  if (room.gameId === 'roulette') {
+    wireRoulette(room);
+    return;
+  }
   room.loop.on('bet', ({ roundId, placed }) =>
     broadcastRoom(room, {
       t: 'bet',
@@ -156,6 +179,11 @@ function wireRoom(room: Room): void {
   room.loop.on('settled', async (outcome) => {
     room.history.push(summarize(outcome.result));
     if (room.history.length > HISTORY_WINDOW) room.history.shift();
+    room.lastResult = {
+      outcome: outcome.result.outcome,
+      playerValue: outcome.result.player.value,
+      bankerValue: outcome.result.banker.value,
+    };
     broadcastRoom(room, {
       t: 'settled',
       roomId: room.id,
@@ -171,6 +199,45 @@ function wireRoom(room: Room): void {
         net: s.settlement.net,
       })),
       roadmap: buildRoadmap(room.history),
+    });
+    for (const ws of room.subscribers) {
+      const playerId = clients.get(ws);
+      if (playerId) send(ws, { t: 'balance', gold: await wallet.getBalance(playerId), diamond: 0 });
+    }
+  });
+}
+
+// Roulette-specific bet + settled wiring (the rest is shared with wireRoom).
+function wireRoulette(room: Room): void {
+  room.loop.on('bet', ({ roundId, placed }) =>
+    broadcastRoom(room, {
+      t: 'bet',
+      roomId: room.id,
+      roundId,
+      playerId: placed.playerId,
+      spotId: placed.bet.spotId,
+      amount: placed.bet.amount,
+    }),
+  );
+  room.loop.on('settled', async (outcome) => {
+    room.roHistory = room.roHistory ?? [];
+    room.roHistory.push(outcome.winning);
+    if (room.roHistory.length > HISTORY_WINDOW) room.roHistory.shift();
+    room.roLast = { winning: outcome.winning, color: outcome.color };
+    broadcastRoom(room, {
+      t: 'spin',
+      roomId: room.id,
+      roundId: outcome.roundId,
+      winning: outcome.winning,
+      color: outcome.color,
+      settled: outcome.settled.map((s) => ({
+        playerId: s.playerId,
+        spotId: s.bet.spotId,
+        amount: s.bet.amount,
+        won: s.settlement.won,
+        net: s.settlement.net,
+      })),
+      recent: room.roHistory.slice(-30),
     });
     for (const ws of room.subscribers) {
       const playerId = clients.get(ws);
@@ -195,6 +262,31 @@ for (const cfg of ROOM_CONFIGS) {
     limits,
     loop,
     history: [],
+    lastResult: null,
+    subscribers: new Set(),
+  };
+  rooms.set(cfg.id, room);
+  wireRoom(room);
+}
+for (const cfg of ROULETTE_ROOM_CONFIGS) {
+  const limits: TableLimits = { minBet: cfg.minBet, maxBet: cfg.maxBet };
+  const timing = {
+    bettingMs: envNum('RO_BETTING_MS', cfg.bettingMs),
+    settleDelayMs: envNum('RO_SETTLE_DELAY_MS', cfg.settleDelayMs),
+    pauseMs: envNum('RO_PAUSE_MS', cfg.pauseMs),
+  };
+  // RouletteTable is structurally compatible with what GameLoop drives.
+  const loop = new GameLoop(new RouletteTable(secureRng, wallet, limits) as unknown as Table, timing);
+  const room: Room = {
+    id: cfg.id,
+    name: cfg.name,
+    gameId: 'roulette',
+    limits,
+    loop,
+    history: [],
+    lastResult: null,
+    roHistory: [],
+    roLast: null,
     subscribers: new Set(),
   };
   rooms.set(cfg.id, room);
@@ -335,11 +427,15 @@ wss.on('connection', (ws) => {
           .map((r) => ({
             id: r.id,
             name: r.name,
+            gameId: r.gameId,
             minBet: r.limits.minBet,
             maxBet: r.limits.maxBet,
             players: roomPlayers(r),
             phase: r.loop.phase,
-            recent: r.history.slice(-RECENT_RESULTS).map((h) => h.outcome),
+            counts: countOutcomes(r.history),
+            lastResult: r.lastResult,
+            roadmap: buildRoadmap(r.history),
+            recent: r.gameId === 'roulette' ? (r.roHistory ?? []).slice(-20) : undefined,
           })),
       });
       return;
@@ -356,12 +452,14 @@ wss.on('connection', (ws) => {
         t: 'roomJoined',
         roomId: room.id,
         name: room.name,
+        gameId: room.gameId,
         minBet: room.limits.minBet,
         maxBet: room.limits.maxBet,
         phase: room.loop.phase,
         roundId: room.loop.roundId,
         endsAt: room.loop.phaseEndsAt || undefined,
         roadmap: buildRoadmap(room.history),
+        recent: room.gameId === 'roulette' ? (room.roHistory ?? []).slice(-30) : undefined,
       });
       return;
     }
@@ -377,7 +475,11 @@ wss.on('connection', (ws) => {
       const roomId = subscriptions.get(ws);
       const room = roomId ? rooms.get(roomId) : undefined;
       if (!room) return send(ws, { t: 'betAck', ok: false, error: '방에 입장한 뒤 베팅하세요.' });
-      const result = await room.loop.placeBet(playerId, { type: msg.betType, amount: msg.amount });
+      const bet =
+        room.gameId === 'roulette'
+          ? { spotId: msg.spotId, amount: msg.amount }
+          : { type: msg.betType, amount: msg.amount };
+      const result = await room.loop.placeBet(playerId, bet as never);
       send(ws, {
         t: 'betAck',
         ok: result.ok,
@@ -385,6 +487,35 @@ wss.on('connection', (ws) => {
         balance: result.balance,
         error: result.error,
       });
+      return;
+    }
+
+    if (msg.t === 'clearBets') {
+      const playerId = clients.get(ws);
+      if (!playerId) return send(ws, { t: 'error', message: '먼저 로그인하세요.' });
+      const roomId = subscriptions.get(ws);
+      const room = roomId ? rooms.get(roomId) : undefined;
+      if (!room) return;
+      const res = await room.loop.clearBets(playerId);
+      if (res.ok && res.balance !== undefined) {
+        send(ws, { t: 'balance', gold: res.balance, diamond: 0 });
+      }
+      return;
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // TEST ONLY — REMOVE BEFORE RELEASE.
+    // Lets the client top up free gold by tapping the coin balance. Guarded by
+    // ALLOW_DEV_TOPUP so it can be disabled in production even if shipped.
+    // ───────────────────────────────────────────────────────────────────────
+    if (msg.t === 'devTopup') {
+      if (process.env.ALLOW_DEV_TOPUP === 'false') {
+        return send(ws, { t: 'error', message: '충전이 비활성화되어 있습니다.' });
+      }
+      const playerId = clients.get(ws);
+      if (!playerId) return send(ws, { t: 'error', message: '먼저 로그인하세요.' });
+      const tx = await wallet.credit(playerId, 100000, `devtopup:${playerId}:${Date.now()}`, 'DEV topup');
+      send(ws, { t: 'balance', gold: tx.balance, diamond: 0 });
       return;
     }
   });

@@ -70,6 +70,43 @@ test('cannot bet below table minimum or above maximum', async () => {
   assert.equal(await wallet.getBalance('alice'), 1000); // nothing escrowed
 });
 
+test('limits are cumulative per market: chips stack up to max, overflow rejected', async () => {
+  const wallet = new InMemoryWallet({ alice: 1000 });
+  const round = new Round('R1', playerWinsScript(), wallet, LIMITS); // max 1000
+  await round.placeBet('alice', { type: 'player', amount: 500 });
+  await round.placeBet('alice', { type: 'player', amount: 500 }); // total 1000 = max, ok
+  assert.equal(await wallet.getBalance('alice'), 0);
+  // one more coin over the cap is rejected, wallet untouched
+  await assert.rejects(() => round.placeBet('alice', { type: 'player', amount: 1 }), BetValidationError);
+  // a different market still has its own headroom (but alice is broke here)
+  assert.equal(round.getBets().length, 2);
+});
+
+test('only the opening bet on a market must meet the minimum', async () => {
+  const wallet = new InMemoryWallet({ alice: 1000 });
+  const round = new Round('R1', playerWinsScript(), wallet, LIMITS); // min 10
+  await assert.rejects(() => round.placeBet('alice', { type: 'player', amount: 5 }), BetValidationError);
+  await round.placeBet('alice', { type: 'player', amount: 100 }); // opens the market
+  await round.placeBet('alice', { type: 'player', amount: 5 }); // top-up below min is fine
+  assert.equal(await wallet.getBalance('alice'), 895);
+});
+
+test('clearBets refunds and removes only the caller\'s bets during betting', async () => {
+  const wallet = new InMemoryWallet({ alice: 1000, bob: 1000 });
+  const round = new Round('R1', playerWinsScript(), wallet, LIMITS);
+  await round.placeBet('alice', { type: 'player', amount: 100 });
+  await round.placeBet('alice', { type: 'banker', amount: 50 });
+  await round.placeBet('bob', { type: 'player', amount: 200 });
+  assert.equal(await wallet.getBalance('alice'), 850);
+
+  const res = await round.clearBets('alice');
+  assert.deepEqual(res.byType, { player: 100, banker: 50 });
+  assert.equal(res.balance, 1000); // fully refunded
+  assert.equal(await wallet.getBalance('alice'), 1000);
+  assert.equal(await wallet.getBalance('bob'), 800); // untouched
+  assert.equal(round.getBets().length, 1); // only bob's bet remains
+});
+
 test('bet rejected when allowedBets excludes the market', async () => {
   const wallet = new InMemoryWallet({ alice: 1000 });
   const round = new Round('R1', playerWinsScript(), wallet, {

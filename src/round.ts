@@ -90,7 +90,7 @@ export class Round {
    */
   async placeBet(playerId: string, bet: Bet): Promise<PlacedBet> {
     if (this._phase !== 'betting') throw new InvalidPhaseError('place a bet', this._phase);
-    this.validate(bet);
+    this.validate(playerId, bet);
 
     const betId = `${this.id}#${this.seq++}`;
     // Debit first; if it throws (insufficient funds) the bet is not recorded.
@@ -99,6 +99,36 @@ export class Round {
     const placed: PlacedBet = { betId, playerId, bet };
     this.bets.push(placed);
     return placed;
+  }
+
+  /**
+   * Cancel and refund all of a player's bets in the current betting window.
+   * Returns how much was on each market (so clients can update) and the new
+   * balance. Only valid while betting is open.
+   */
+  async clearBets(playerId: string): Promise<{ byType: Record<BetType, number>; balance: number }> {
+    if (this._phase !== 'betting') throw new InvalidPhaseError('clear bets', this._phase);
+    const byType = {} as Record<BetType, number>;
+    let refund = 0;
+    for (const pb of this.bets) {
+      if (pb.playerId !== playerId) continue;
+      byType[pb.bet.type] = (byType[pb.bet.type] ?? 0) + pb.bet.amount;
+      refund += pb.bet.amount;
+    }
+    for (let i = this.bets.length - 1; i >= 0; i--) {
+      if (this.bets[i].playerId === playerId) this.bets.splice(i, 1);
+    }
+    let balance = await this.wallet.getBalance(playerId);
+    if (refund > 0) {
+      const tx = await this.wallet.credit(
+        playerId,
+        refund,
+        `refund:${this.id}:${playerId}:${this.seq++}`,
+        `cancel bets @ ${this.id}`,
+      );
+      balance = tx.balance;
+    }
+    return { byType, balance };
   }
 
   /** Close the betting window. No bets accepted after this. */
@@ -136,17 +166,27 @@ export class Round {
     return this._outcome;
   }
 
-  private validate(bet: Bet): void {
+  private validate(playerId: string, bet: Bet): void {
     if (!Number.isInteger(bet.amount) || bet.amount <= 0) {
       throw new BetValidationError(`bet amount must be a positive integer, got ${bet.amount}`);
     }
-    if (bet.amount < this.limits.minBet || bet.amount > this.limits.maxBet) {
-      throw new BetValidationError(
-        `bet ${bet.amount} outside table limits [${this.limits.minBet}, ${this.limits.maxBet}]`,
-      );
-    }
     if (this.limits.allowedBets && !this.limits.allowedBets.includes(bet.type)) {
       throw new BetValidationError(`bet type '${bet.type}' not allowed at this table`);
+    }
+    // Limits apply to the player's *cumulative* stake on a market, so chips can
+    // be stacked up to the cap: minBet gates the opening bet, maxBet caps the total.
+    const existing = this.bets
+      .filter((p) => p.playerId === playerId && p.bet.type === bet.type)
+      .reduce((sum, p) => sum + p.bet.amount, 0);
+    if (existing === 0 && bet.amount < this.limits.minBet) {
+      throw new BetValidationError(
+        `opening bet ${bet.amount} below table minimum ${this.limits.minBet}`,
+      );
+    }
+    if (existing + bet.amount > this.limits.maxBet) {
+      throw new BetValidationError(
+        `total ${existing + bet.amount} exceeds table maximum ${this.limits.maxBet}`,
+      );
     }
   }
 }

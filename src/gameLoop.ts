@@ -100,6 +100,26 @@ export class GameLoop extends EventEmitter {
     }
   }
 
+  /**
+   * Cancel and refund all of a player's bets in the open round. Emits
+   * 'betsCleared' so the server can broadcast the reversal; never throws.
+   */
+  async clearBets(
+    playerId: string,
+  ): Promise<{ ok: boolean; byType?: Record<string, number>; balance?: number; error?: string }> {
+    const round = this.current;
+    if (this._phase !== 'betting' || !round) {
+      return { ok: false, error: 'betting is closed' };
+    }
+    try {
+      const res = await round.clearBets(playerId);
+      this.emit('betsCleared', { roundId: round.id, playerId, byType: res.byType, balance: res.balance });
+      return { ok: true, byType: res.byType, balance: res.balance };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
+
   private openRound(): void {
     if (!this.running) return;
     this.current = this.table.startRound();

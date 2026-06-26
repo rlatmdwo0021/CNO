@@ -21,14 +21,28 @@ export interface GameInfo {
   status: 'live' | 'soon';
 }
 
+export interface RoomCounts {
+  player: number;
+  banker: number;
+  tie: number;
+}
+export interface RoomLastResult {
+  outcome: 'player' | 'banker' | 'tie';
+  playerValue: number;
+  bankerValue: number;
+}
 export interface RoomInfo {
   id: string;
   name: string;
+  gameId?: string; // 'baccarat' | 'roulette' (defaults to baccarat for old clients)
   minBet: number;
   maxBet: number;
   players: number;
   phase: string;
-  recent: Array<'player' | 'banker' | 'tie'>; // recent outcomes for the lobby preview
+  counts: RoomCounts; // P/B/T win tallies for the lobby (baccarat)
+  lastResult: RoomLastResult | null; // most recent settled round's card values (baccarat)
+  roadmap: RoadmapView; // full roads for the lobby scoreboard preview (baccarat)
+  recent?: string[]; // roulette: recent winning pockets, oldest first
 }
 
 // ---- client -> server ----
@@ -65,8 +79,17 @@ export interface LeaveRoomMsg {
 }
 export interface BetMsg {
   t: 'bet';
-  betType: BetType;
+  betType?: BetType; // baccarat market
+  spotId?: string; // roulette spot id
   amount: number;
+}
+/** Cancel & refund all of my bets in the current betting window. */
+export interface ClearBetsMsg {
+  t: 'clearBets';
+}
+/** TEST ONLY — remove before release. Tops up the player's gold balance. */
+export interface DevTopupMsg {
+  t: 'devTopup';
 }
 export type ClientMsg =
   | RegisterMsg
@@ -76,7 +99,9 @@ export type ClientMsg =
   | ListRoomsMsg
   | JoinRoomMsg
   | LeaveRoomMsg
-  | BetMsg;
+  | BetMsg
+  | ClearBetsMsg
+  | DevTopupMsg;
 
 // ---- server -> client ----
 export interface CardView {
@@ -89,7 +114,8 @@ export interface HandView {
 }
 export interface SettledBetView {
   playerId: string;
-  betType: BetType;
+  betType?: BetType; // baccarat
+  spotId?: string; // roulette
   amount: number;
   won: boolean | undefined; // undefined = push
   net: number;
@@ -119,12 +145,14 @@ export interface RoomJoinedMsg {
   t: 'roomJoined';
   roomId: string;
   name: string;
+  gameId: string; // 'baccarat' | 'roulette'
   minBet: number;
   maxBet: number;
   phase: string;
   roundId?: string;
   endsAt?: number;
-  roadmap: RoadmapView;
+  roadmap: RoadmapView; // baccarat
+  recent?: string[]; // roulette recent winning pockets
 }
 export interface OpenMsg {
   t: 'open';
@@ -137,7 +165,8 @@ export interface BetBroadcastMsg {
   roomId: string;
   roundId: string;
   playerId: string;
-  betType: BetType;
+  betType?: BetType; // baccarat
+  spotId?: string; // roulette
   amount: number;
 }
 export interface BetAckMsg {
@@ -172,6 +201,26 @@ export interface ErrorMsg {
   t: 'error';
   message: string;
 }
+/** Roulette round result: the winning pocket + everyone's settled bets. */
+export interface RouletteSettledMsg {
+  t: 'spin';
+  roomId: string;
+  roundId: string;
+  winning: string; // '0' | '00' | '1'..'36'
+  color: 'red' | 'black' | 'green';
+  settled: SettledBetView[];
+  recent: string[]; // recent winning pockets incl. this one, oldest first
+}
+/** A player's bets were cancelled & refunded; clients reverse the stake. */
+export interface BetsClearedMsg {
+  t: 'betsCleared';
+  roomId: string;
+  roundId: string;
+  playerId: string;
+  byType: Record<string, number>;
+  /** New balance — sent only to the player who cancelled. */
+  balance?: number;
+}
 export type ServerMsg =
   | SessionMsg
   | AuthErrorMsg
@@ -183,6 +232,8 @@ export type ServerMsg =
   | LockedMsg
   | SettledMsg
   | BalanceMsg
+  | BetsClearedMsg
+  | RouletteSettledMsg
   | ErrorMsg;
 
 /** Parse an incoming client frame; returns null if malformed. */
@@ -226,8 +277,16 @@ export function parseClientMsg(raw: string): ClientMsg | null {
     return { t: 'leaveRoom' };
   }
   if (msg.t === 'bet') {
-    if (typeof msg.betType !== 'string' || typeof msg.amount !== 'number') return null;
-    return { t: 'bet', betType: msg.betType as BetType, amount: msg.amount };
+    if (typeof msg.amount !== 'number') return null;
+    if (typeof msg.spotId === 'string') return { t: 'bet', spotId: msg.spotId, amount: msg.amount };
+    if (typeof msg.betType === 'string') return { t: 'bet', betType: msg.betType as BetType, amount: msg.amount };
+    return null;
+  }
+  if (msg.t === 'clearBets') {
+    return { t: 'clearBets' };
+  }
+  if (msg.t === 'devTopup') {
+    return { t: 'devTopup' }; // TEST ONLY — remove before release
   }
   return null;
 }

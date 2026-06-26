@@ -58,15 +58,26 @@ class GameService extends ChangeNotifier {
   final List<String> feed = [];
   Roadmap roadmap = Roadmap.empty();
 
-  int chip = 50;
-  final List<int> chips = const [10, 50, 100, 250];
+  int chip = 100; // selected chip denomination (placed onto a zone)
+  final List<int> chips = const [25, 100, 500, 1000, 10000];
+  final Map<String, int> myBets = {}; // betType -> my stake this round
+  final Map<String, int> tableBets = {}; // betType -> everyone's stake this round
+  final Map<String, int> lastBets = {}; // my bets from the previous round (for 반복)
 
   // --- navigation ---
   AppView view = AppView.lobby;
   List<GameInfo> games = [];
   List<RoomInfo> rooms = [];
+  String roomsGameId = ''; // which game the current `rooms` list belongs to
   String? roomId; // current room (null = not in a room)
   String roomName = '';
+  String roomGameId = 'baccarat'; // 'baccarat' | 'roulette' — routes the table screen
+
+  // --- roulette ---
+  String? winning; // winning pocket id ('0'|'00'|'1'..'36')
+  String? winColor; // 'red' | 'black' | 'green'
+  List<String> recent = []; // recent winning pockets, oldest first
+  int lastNet = 0; // my net coins from the last spin (for the result banner)
 
   bool get canBet => phase == 'betting' && conn == Conn.online && roomId != null;
 
@@ -106,9 +117,30 @@ class GameService extends ChangeNotifier {
     notifyListeners();
   }
 
-  void bet(String type) {
-    if (!canBet) return;
-    _send({'t': 'bet', 'betType': type, 'amount': chip});
+  /// Cancel & refund all my bets in the current betting window.
+  void clearBets() {
+    if (conn != Conn.online || roomId == null) return;
+    _send({'t': 'clearBets'});
+  }
+
+  /// TEST ONLY — remove before release. Tap the gold balance to top up coins;
+  /// the server credits the wallet and echoes the new balance.
+  void devTopup() {
+    if (conn != Conn.online) return;
+    _send({'t': 'devTopup'});
+  }
+
+  /// Place [amount] on [type]. Limit checks happen in the UI (so it can show a
+  /// warning); the server still re-validates authoritatively.
+  void bet(String type, int amount) {
+    if (!canBet || amount <= 0) return;
+    _send({'t': 'bet', 'betType': type, 'amount': amount});
+  }
+
+  /// Roulette: place [amount] on a spot id (e.g. 's:17', 'red', 'dz:2').
+  void betSpot(String spotId, int amount) {
+    if (!canBet || amount <= 0) return;
+    _send({'t': 'bet', 'spotId': spotId, 'amount': amount});
   }
 
   void login(String username, String password) {
@@ -154,9 +186,9 @@ class GameService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- rooms (the lobby browses rooms directly via the 바카라 tab) ---
-  void refreshRooms() {
-    if (conn == Conn.online) _send({'t': 'listRooms', 'gameId': 'baccarat'});
+  // --- rooms (the lobby browses rooms per game tab) ---
+  void refreshRooms(String gameId) {
+    if (conn == Conn.online) _send({'t': 'listRooms', 'gameId': gameId});
   }
 
   void joinRoom(String id) {
@@ -186,7 +218,8 @@ class GameService extends ChangeNotifier {
     final m = jsonDecode(data as String) as Map<String, dynamic>;
     final t = m['t'];
     // Ignore room events that aren't for the room we're currently in.
-    if ((t == 'open' || t == 'locked' || t == 'settled' || t == 'bet') && m['roomId'] != roomId) {
+    if ((t == 'open' || t == 'locked' || t == 'settled' || t == 'spin' || t == 'bet' || t == 'betsCleared') &&
+        m['roomId'] != roomId) {
       return;
     }
     switch (t) {
@@ -213,13 +246,21 @@ class GameService extends ChangeNotifier {
         roomId = null;
         break;
       case 'rooms':
+        roomsGameId = (m['gameId'] ?? '') as String;
         rooms = (m['rooms'] as List).map((r) => RoomInfo.fromJson(r as Map<String, dynamic>)).toList();
         break;
       case 'roomJoined':
         roomId = m['roomId'] as String;
         roomName = m['name'] as String;
+        roomGameId = (m['gameId'] ?? 'baccarat') as String;
+        recent = List<String>.from((m['recent'] ?? const []) as List);
+        winning = null;
         minBet = m['minBet'] as int;
         maxBet = m['maxBet'] as int;
+        // default-select a chip valid for this room's per-bet limits
+        if (chip < minBet || chip > maxBet) {
+          chip = chips.firstWhere((c) => c >= minBet && c <= maxBet, orElse: () => chips.first);
+        }
         phase = m['phase'] as String;
         endsAt = (m['endsAt'] ?? 0) as int;
         roadmap = Roadmap.fromJson(m['roadmap'] as Map<String, dynamic>);
@@ -227,6 +268,8 @@ class GameService extends ChangeNotifier {
         banker = null;
         outcome = null;
         feed.clear();
+        myBets.clear();
+        tableBets.clear();
         view = AppView.table;
         break;
       case 'open':
@@ -237,10 +280,36 @@ class GameService extends ChangeNotifier {
         banker = null;
         outcome = null;
         myResults = [];
+        // remember last round's bets (for the 반복 button) before clearing
+        if (myBets.isNotEmpty) {
+          lastBets
+            ..clear()
+            ..addAll(myBets);
+        }
+        myBets.clear();
+        tableBets.clear();
         break;
       case 'bet':
-        final mine = m['playerId'] == playerId;
-        _log('${mine ? '나' : m['playerId']} → ${m['betType']} ${m['amount']}');
+        final bType = (m['betType'] ?? m['spotId']) as String;
+        final amt = m['amount'] as int;
+        tableBets[bType] = (tableBets[bType] ?? 0) + amt; // everyone (incl. me)
+        if (m['playerId'] == playerId) {
+          myBets[bType] = (myBets[bType] ?? 0) + amt;
+        }
+        break;
+      case 'betsCleared':
+        final cleared = m['byType'] as Map<String, dynamic>;
+        final isMe = m['playerId'] == playerId;
+        cleared.forEach((type, v) {
+          final amt = v as int;
+          final left = (tableBets[type] ?? 0) - amt;
+          if (left > 0) {
+            tableBets[type] = left;
+          } else {
+            tableBets.remove(type);
+          }
+          if (isMe) myBets.remove(type);
+        });
         break;
       case 'betAck':
         if (m['ok'] == true) {
@@ -266,6 +335,16 @@ class GameService extends ChangeNotifier {
           final tag = r.won == null ? '푸시' : (r.won! ? '승' : '패');
           _log('내 ${r.betType} $tag ${r.net >= 0 ? '+' : ''}${r.net}');
         }
+        break;
+      case 'spin':
+        phase = 'settled';
+        winning = m['winning'] as String;
+        winColor = m['color'] as String;
+        recent = List<String>.from((m['recent'] ?? const []) as List);
+        final settled = (m['settled'] as List).cast<Map<String, dynamic>>();
+        lastNet = settled
+            .where((x) => x['playerId'] == playerId)
+            .fold<int>(0, (a, x) => a + (x['net'] as int));
         break;
       case 'balance':
         gold = (m['gold'] ?? gold) as int;
