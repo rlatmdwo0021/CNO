@@ -53,6 +53,61 @@ class CoinBar extends StatelessWidget {
   }
 }
 
+/// Compact bead-plate preview of recent outcomes (6 rows, column-major),
+/// for showing a room's current game at a glance in the lobby.
+class MiniBead extends StatelessWidget {
+  final List<String> outcomes; // player | banker | tie, oldest first
+  final double dot;
+  const MiniBead(this.outcomes, {super.key, this.dot = 9});
+
+  @override
+  Widget build(BuildContext context) {
+    if (outcomes.isEmpty) {
+      return SizedBox(
+        height: dot * 6 + 10,
+        child: const Center(
+            child: Text('아직 결과 없음', style: TextStyle(fontSize: 11, color: Colors.white30))),
+      );
+    }
+    final cols = (outcomes.length / 6).ceil();
+    return SizedBox(
+      height: dot * 6 + 4,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        reverse: true, // newest columns visible on the right
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var c = 0; c < cols; c++)
+              Column(
+                children: [
+                  for (var r = 0; r < 6; r++) _cell(c * 6 + r),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cell(int i) {
+    if (i >= outcomes.length) return SizedBox(width: dot + 2, height: dot + 2);
+    final o = outcomes[i];
+    final letter = o == 'player' ? 'P' : (o == 'banker' ? 'B' : 'T');
+    return Padding(
+      padding: const EdgeInsets.all(1),
+      child: Container(
+        width: dot,
+        height: dot,
+        decoration: BoxDecoration(color: outcomeColor(o), shape: BoxShape.circle),
+        alignment: Alignment.center,
+        child: Text(letter,
+            style: TextStyle(fontSize: dot * 0.62, color: Colors.white, fontWeight: FontWeight.bold)),
+      ),
+    );
+  }
+}
+
 /// Small player grade badge (placeholder tier for now).
 class GradeBadge extends StatelessWidget {
   final String grade;

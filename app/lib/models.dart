@@ -17,7 +17,8 @@ class RoomInfo {
   final int maxBet;
   final int players;
   final String phase;
-  RoomInfo(this.id, this.name, this.minBet, this.maxBet, this.players, this.phase);
+  final List<String> recent; // recent outcomes (player/banker/tie) for preview
+  RoomInfo(this.id, this.name, this.minBet, this.maxBet, this.players, this.phase, this.recent);
   factory RoomInfo.fromJson(Map<String, dynamic> j) => RoomInfo(
         j['id'] as String,
         j['name'] as String,
@@ -25,6 +26,7 @@ class RoomInfo {
         j['maxBet'] as int,
         j['players'] as int,
         j['phase'] as String,
+        ((j['recent'] ?? []) as List).cast<String>(),
       );
 }
 

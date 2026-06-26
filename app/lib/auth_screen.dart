@@ -27,11 +27,16 @@ class _AuthScreenState extends State<AuthScreen> {
   void _submit() {
     final u = _username.text.trim();
     final p = _password.text;
-    if (u.isEmpty || p.isEmpty) return;
     if (_registerMode) {
+      if (u.isEmpty || p.isEmpty) return;
       widget.service.register(u, p, _name.text.trim());
     } else {
-      widget.service.login(u, p);
+      // Test mode: empty fields = instant login to the shared test account.
+      if (u.isEmpty && p.isEmpty) {
+        widget.service.devLogin();
+      } else if (u.isNotEmpty && p.isNotEmpty) {
+        widget.service.login(u, p);
+      }
     }
   }
 
@@ -98,6 +103,12 @@ class _AuthScreenState extends State<AuthScreen> {
                       : Text(_registerMode ? '회원가입' : '로그인',
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                 ),
+                if (!_registerMode) ...[
+                  const SizedBox(height: 8),
+                  const Text("테스트: 빈칸으로 '로그인'을 누르면 바로 입장",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11, color: Colors.white38)),
+                ],
                 const SizedBox(height: 8),
                 TextButton(
                   onPressed: busy

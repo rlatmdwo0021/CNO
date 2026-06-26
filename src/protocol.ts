@@ -28,6 +28,7 @@ export interface RoomInfo {
   maxBet: number;
   players: number;
   phase: string;
+  recent: Array<'player' | 'banker' | 'tie'>; // recent outcomes for the lobby preview
 }
 
 // ---- client -> server ----

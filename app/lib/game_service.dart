@@ -38,6 +38,7 @@ class GameService extends ChangeNotifier {
   bool authPending = false; // a login/register is in flight
   String? authError; // last auth failure message (shown on the auth screen)
   String? _sessionToken; // in-memory only; lets us re-auth on reconnect
+  bool _devAutoRegister = false; // test login: register the test account if absent
 
   String? playerId;
   String name = '';
@@ -127,6 +128,17 @@ class GameService extends ChangeNotifier {
     _send({'t': 'register', 'username': username, 'password': password, 'name': name});
   }
 
+  /// Test-only quick login: log into a shared `test` account, creating it on
+  /// first use. Lets us tap "로그인" with empty fields and jump straight in.
+  void devLogin() {
+    if (conn != Conn.online) return;
+    authPending = true;
+    authError = null;
+    _devAutoRegister = true;
+    notifyListeners();
+    _send({'t': 'login', 'username': 'test', 'password': 'test1234'});
+  }
+
   /// Return to the login screen. Next login rebinds this socket on the server.
   void logout() {
     if (roomId != null) _send({'t': 'leaveRoom'});
@@ -195,6 +207,12 @@ class GameService extends ChangeNotifier {
         roomId = null;
         break;
       case 'authError':
+        // Test login: the `test` account doesn't exist yet → create it.
+        if (_devAutoRegister) {
+          _devAutoRegister = false;
+          _send({'t': 'register', 'username': 'test', 'password': 'test1234', 'name': '테스터'});
+          return;
+        }
         authError = m['message'] as String?;
         authPending = false;
         loggedIn = false; // back to the login screen (e.g. expired session)

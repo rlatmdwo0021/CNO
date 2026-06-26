@@ -122,47 +122,37 @@ class _LobbyScreenState extends State<LobbyScreen> with SingleTickerProviderStat
     return GestureDetector(
       onTap: () => s.joinRoom(r.id),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: feltLight,
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: goldColor.withValues(alpha: 0.35)),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(r.name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
-                  Text('한도 ${fmtCoins(r.minBet)} ~ ${fmtCoins(r.maxBet)}',
-                      style: const TextStyle(fontSize: 13, color: Colors.white70)),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            Row(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.person, size: 14, color: Colors.white54),
-                    const SizedBox(width: 2),
-                    Text('${r.players}',
-                        style: const TextStyle(fontSize: 13, color: Colors.white70)),
-                  ],
-                ),
-                const SizedBox(height: 6),
+                Text(r.name, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+                const SizedBox(width: 10),
+                Text('한도 ${fmtCoins(r.minBet)}~${fmtCoins(r.maxBet)}',
+                    style: const TextStyle(fontSize: 12, color: Colors.white70)),
+                const Spacer(),
+                const Icon(Icons.person, size: 14, color: Colors.white54),
+                const SizedBox(width: 2),
+                Text('${r.players}', style: const TextStyle(fontSize: 13, color: Colors.white70)),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                      color: feltColor, borderRadius: BorderRadius.circular(20)),
+                  decoration:
+                      BoxDecoration(color: feltColor, borderRadius: BorderRadius.circular(20)),
                   child: Text(phaseText, style: TextStyle(fontSize: 11, color: phaseColor)),
                 ),
               ],
             ),
-            const SizedBox(width: 8),
-            const Icon(Icons.chevron_right, color: Colors.white38),
+            const SizedBox(height: 8),
+            // Recent results at a glance (mini bead plate).
+            MiniBead(r.recent),
           ],
         ),
       ),

@@ -77,17 +77,18 @@ const GAMES: GameInfo[] = [
 ];
 const GRADE_PLACEHOLDER = '브론즈';
 
-// Fixed preset rooms by betting limit. Each is an independent table/loop/shoe.
+// Fixed preset rooms by betting limit. Each is an independent table/loop/shoe,
+// and each runs at its OWN pace so the rooms aren't all synced in lockstep
+// (beginner is relaxed, VIP is fast). Env vars, if set, override all rooms
+// (handy for fast local testing).
 const ROOM_CONFIGS = [
-  { id: 'beginner', name: '초보', minBet: 10, maxBet: 500 },
-  { id: 'standard', name: '일반', minBet: 100, maxBet: 5000 },
-  { id: 'vip', name: 'VIP', minBet: 1000, maxBet: 50000 },
+  { id: 'beginner', name: '초보', minBet: 10, maxBet: 500, bettingMs: 12000, settleDelayMs: 1500, pauseMs: 5000 },
+  { id: 'standard', name: '일반', minBet: 100, maxBet: 5000, bettingMs: 8000, settleDelayMs: 1200, pauseMs: 4000 },
+  { id: 'vip', name: 'VIP', minBet: 1000, maxBet: 50000, bettingMs: 6000, settleDelayMs: 1000, pauseMs: 3000 },
 ];
-const TIMING = {
-  bettingMs: Number(process.env.BETTING_MS ?? 8000),
-  settleDelayMs: Number(process.env.SETTLE_DELAY_MS ?? 1200),
-  pauseMs: Number(process.env.PAUSE_MS ?? 4000),
-};
+const envNum = (key: string, fallback: number): number =>
+  process.env[key] ? Number(process.env[key]) : fallback;
+const RECENT_RESULTS = 36; // recent outcomes sent per room for the lobby preview
 
 interface Room {
   id: string;
@@ -181,7 +182,12 @@ function wireRoom(room: Room): void {
 const rooms = new Map<string, Room>();
 for (const cfg of ROOM_CONFIGS) {
   const limits: TableLimits = { minBet: cfg.minBet, maxBet: cfg.maxBet };
-  const loop = new GameLoop(new Table(new Shoe(8, secureRng), wallet, limits), TIMING);
+  const timing = {
+    bettingMs: envNum('BETTING_MS', cfg.bettingMs),
+    settleDelayMs: envNum('SETTLE_DELAY_MS', cfg.settleDelayMs),
+    pauseMs: envNum('PAUSE_MS', cfg.pauseMs),
+  };
+  const loop = new GameLoop(new Table(new Shoe(8, secureRng), wallet, limits), timing);
   const room: Room = {
     id: cfg.id,
     name: cfg.name,
@@ -324,6 +330,7 @@ wss.on('connection', (ws) => {
             maxBet: r.limits.maxBet,
             players: roomPlayers(r),
             phase: r.loop.phase,
+            recent: r.history.slice(-RECENT_RESULTS).map((h) => h.outcome),
           })),
       });
       return;
