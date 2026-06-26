@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Baccarat Table</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; font-family: system-ui, sans-serif; background: #0b3d2e; color: #f5f5f5;
+        display: flex; justify-content: center; padding: 24px;
+      }
+      .table { width: 100%; max-width: 640px; }
+      header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+      h1 { font-size: 20px; margin: 0; }
+      .me { font-size: 14px; opacity: .8; }
+      .balance { font-size: 28px; font-weight: 700; color: #ffd76b; }
+      .phase {
+        text-align: center; padding: 12px; border-radius: 10px; background: #0e5440;
+        font-size: 18px; font-weight: 600; margin-bottom: 16px;
+      }
+      .phase small { display: block; font-weight: 400; opacity: .8; font-size: 13px; }
+      .hands { display: flex; gap: 16px; margin-bottom: 16px; }
+      .hand { flex: 1; background: #0e5440; border-radius: 10px; padding: 12px; text-align: center; }
+      .hand h3 { margin: 0 0 8px; font-size: 14px; letter-spacing: .05em; text-transform: uppercase; opacity: .85; }
+      .hand.win { outline: 2px solid #ffd76b; }
+      .cards { display: flex; gap: 6px; justify-content: center; min-height: 56px; }
+      .card {
+        width: 38px; height: 54px; background: #fff; color: #111; border-radius: 6px;
+        display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 16px;
+      }
+      .card.red { color: #c0392b; }
+      .value { font-size: 24px; font-weight: 800; margin-top: 6px; }
+      .controls { margin-bottom: 16px; }
+      .chips { display: flex; gap: 8px; margin-bottom: 10px; }
+      .chip { flex: 1; padding: 8px; border: 1px solid #ffffff33; background: #0e5440; color: #fff;
+        border-radius: 8px; cursor: pointer; font-size: 14px; }
+      .chip.active { background: #ffd76b; color: #111; border-color: #ffd76b; }
+      .markets { display: flex; gap: 8px; }
+      .market { flex: 1; padding: 14px; border: none; border-radius: 10px; cursor: pointer;
+        font-size: 15px; font-weight: 700; color: #111; }
+      .market:disabled { opacity: .4; cursor: not-allowed; }
+      .market.player { background: #5ba9f7; }
+      .market.tie { background: #6bd49a; }
+      .market.banker { background: #f7a35b; }
+      .roads { display: flex; gap: 12px; margin-bottom: 16px; }
+      .road { background: #0e5440; border-radius: 10px; padding: 8px 10px; overflow-x: auto; flex: 1; }
+      .road h4 { margin: 0 0 6px; font-size: 11px; opacity: .8; text-transform: uppercase; letter-spacing: .05em; }
+      .grid { display: grid; grid-template-rows: repeat(6, 20px); grid-auto-columns: 20px; grid-auto-flow: column; gap: 2px; min-height: 128px; }
+      .bcell { width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; }
+      .bcell.player { background: #3b82f6; } .bcell.banker { background: #ef4444; } .bcell.tie { background: #22c55e; }
+      .rcell { width: 20px; height: 20px; border-radius: 50%; border: 3px solid transparent; position: relative;
+        display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; }
+      .rcell.player { border-color: #3b82f6; } .rcell.banker { border-color: #ef4444; }
+      .rcell .ties { color: #22c55e; }
+      .rcell .pp { position: absolute; left: -2px; bottom: -2px; width: 7px; height: 7px; border-radius: 50%; background: #3b82f6; }
+      .rcell .bp { position: absolute; right: -2px; top: -2px; width: 7px; height: 7px; border-radius: 50%; background: #ef4444; }
+      .grid.small-cells { grid-template-rows: repeat(6, 14px); grid-auto-columns: 14px; min-height: 90px; }
+      /* derived marks: big eye = filled disc, small = hollow ring, cockroach = slash */
+      .dcell { width: 12px; height: 12px; }
+      .dcell.disc { border-radius: 50%; }
+      .dcell.disc.red { background: #ef4444; } .dcell.disc.blue { background: #3b82f6; }
+      .dcell.ring { border-radius: 50%; border: 2px solid transparent; }
+      .dcell.ring.red { border-color: #ef4444; } .dcell.ring.blue { border-color: #3b82f6; }
+      .dcell.slash { width: 14px; height: 3px; transform: rotate(45deg); margin: 5px 0; }
+      .dcell.slash.red { background: #ef4444; } .dcell.slash.blue { background: #3b82f6; }
+      .feed { background: #0e5440; border-radius: 10px; padding: 10px 12px; height: 150px; overflow-y: auto;
+        font-size: 13px; }
+      .feed div { padding: 2px 0; border-bottom: 1px solid #ffffff14; }
+      .feed .win { color: #6bd49a; } .feed .lose { color: #f08a8a; } .feed .push { color: #ffd76b; }
+      .mine { color: #ffd76b; }
+    </style>
+  </head>
+  <body>
+    <div class="table">
+      <header>
+        <div>
+          <h1>🃏 Baccarat</h1>
+          <div class="me" id="me">connecting…</div>
+        </div>
+        <div style="text-align:right">
+          <div class="balance" id="balance">—</div>
+          <button id="newAccount" style="margin-top:4px;font-size:11px;background:#0e5440;color:#fff;border:1px solid #ffffff33;border-radius:6px;padding:3px 8px;cursor:pointer">New account</button>
+        </div>
+      </header>
+
+      <div class="phase" id="phase">Connecting…<small id="phaseSub"></small></div>
+
+      <div class="hands">
+        <div class="hand" id="handPlayer">
+          <h3>Player</h3>
+          <div class="cards" id="playerCards"></div>
+          <div class="value" id="playerValue"></div>
+        </div>
+        <div class="hand" id="handBanker">
+          <h3>Banker</h3>
+          <div class="cards" id="bankerCards"></div>
+          <div class="value" id="bankerValue"></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="chips" id="chips"></div>
+        <div class="markets">
+          <button class="market player" data-bet="player">PLAYER 1:1</button>
+          <button class="market tie" data-bet="tie">TIE 8:1</button>
+          <button class="market banker" data-bet="banker">BANKER 0.95:1</button>
+        </div>
+      </div>
+
+      <div class="roads">
+        <div class="road"><h4>Bead Plate</h4><div class="grid" id="bead"></div></div>
+        <div class="road"><h4>Big Road</h4><div class="grid" id="bigroad"></div></div>
+      </div>
+      <div class="roads">
+        <div class="road"><h4>Big Eye Boy</h4><div class="grid small-cells" id="bigEye"></div></div>
+        <div class="road"><h4>Small Road</h4><div class="grid small-cells" id="small"></div></div>
+        <div class="road"><h4>Cockroach</h4><div class="grid small-cells" id="cockroach"></div></div>
+      </div>
+
+      <div class="feed" id="feed"></div>
+    </div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const ws = new WebSocket(`ws://${location.host}`);
+      let me = null, chip = 50, endsAt = 0, phase = 'idle', countdownTimer = null;
+
+      // chips
+      [10, 50, 100, 250].forEach((amt, i) => {
+        const b = document.createElement('button');
+        b.className = 'chip' + (amt === chip ? ' active' : '');
+        b.textContent = amt; b.onclick = () => { chip = amt; renderChips(); };
+        b.dataset.amt = amt; $('chips').appendChild(b);
+      });
+      function renderChips() {
+        document.querySelectorAll('.chip').forEach((c) =>
+          c.classList.toggle('active', Number(c.dataset.amt) === chip));
+      }
+
+      function log(html, cls = '') {
+        const d = document.createElement('div');
+        if (cls) d.className = cls;
+        d.innerHTML = html; $('feed').prepend(d);
+      }
+
+      const suitChar = { S: '♠', H: '♥', D: '♦', C: '♣' };
+      function renderHand(prefix, hand) {
+        const wrap = $(prefix + 'Cards'); wrap.innerHTML = '';
+        (hand?.cards || []).forEach((c) => {
+          const el = document.createElement('div');
+          el.className = 'card' + (c.suit === 'H' || c.suit === 'D' ? ' red' : '');
+          const rank = c.rank === '10' ? '10' : c.rank;
+          el.textContent = rank + suitChar[c.suit];
+          wrap.appendChild(el);
+        });
+        $(prefix + 'Value').textContent = hand ? hand.value : '';
+      }
+
+      function setMarketsEnabled(on) {
+        document.querySelectorAll('.market').forEach((b) => (b.disabled = !on));
+      }
+
+      function renderRoadmap(rm) {
+        if (!rm) return;
+        const bead = $('bead'); bead.innerHTML = '';
+        for (const c of rm.bead.cells) {
+          const el = document.createElement('div');
+          el.className = 'bcell ' + c.outcome;
+          el.style.gridRow = c.row + 1; el.style.gridColumn = c.col + 1;
+          el.textContent = c.outcome === 'player' ? 'P' : c.outcome === 'banker' ? 'B' : 'T';
+          bead.appendChild(el);
+        }
+        const big = $('bigroad'); big.innerHTML = '';
+        for (const c of rm.big.cells) {
+          const el = document.createElement('div');
+          el.className = 'rcell ' + c.outcome;
+          el.style.gridRow = c.row + 1; el.style.gridColumn = c.col + 1;
+          if (c.ties > 0) { const t = document.createElement('span'); t.className = 'ties'; t.textContent = c.ties; el.appendChild(t); }
+          if (c.playerPair) { const d = document.createElement('span'); d.className = 'pp'; el.appendChild(d); }
+          if (c.bankerPair) { const d = document.createElement('span'); d.className = 'bp'; el.appendChild(d); }
+          big.appendChild(el);
+        }
+        renderDerived('bigEye', rm.bigEye, 'disc');
+        renderDerived('small', rm.small, 'ring');
+        renderDerived('cockroach', rm.cockroach, 'slash');
+      }
+
+      function renderDerived(id, road, shape) {
+        const grid = $(id); grid.innerHTML = '';
+        if (!road) return;
+        for (const c of road.cells) {
+          const el = document.createElement('div');
+          el.className = `dcell ${shape} ${c.color}`;
+          el.style.gridRow = c.row + 1; el.style.gridColumn = c.col + 1;
+          grid.appendChild(el);
+        }
+      }
+
+      function tick() {
+        if (phase !== 'betting') return;
+        const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+        $('phase').firstChild.textContent = `Place your bets — ${left}s`;
+      }
+
+      document.querySelectorAll('.market').forEach((b) =>
+        (b.onclick = () => ws.send(JSON.stringify({ t: 'bet', betType: b.dataset.bet, amount: chip }))));
+
+      const TOKEN_KEY = 'casino_token';
+      ws.onopen = () => {
+        const token = localStorage.getItem(TOKEN_KEY);
+        if (token) ws.send(JSON.stringify({ t: 'auth', token }));
+        else ws.send(JSON.stringify({ t: 'register' }));
+      };
+      ws.onmessage = (ev) => {
+        const m = JSON.parse(ev.data);
+        switch (m.t) {
+          case 'session':
+            if (m.token) localStorage.setItem(TOKEN_KEY, m.token); // store on first register
+            me = m.playerId;
+            $('me').textContent = `${m.name} · ${me}  (limits ${m.limits.minBet}–${m.limits.maxBet})`;
+            $('balance').textContent = m.balance; phase = m.phase; endsAt = m.endsAt || 0;
+            renderRoadmap(m.roadmap);
+            if (phase === 'betting') { setMarketsEnabled(true); }
+            break;
+          case 'authError':
+            // Stale/invalid token — drop it and register a fresh account.
+            localStorage.removeItem(TOKEN_KEY);
+            ws.send(JSON.stringify({ t: 'register' }));
+            break;
+          case 'open':
+            phase = 'betting'; endsAt = m.endsAt;
+            renderHand('player', null); renderHand('banker', null);
+            $('handPlayer').classList.remove('win'); $('handBanker').classList.remove('win');
+            $('phaseSub').textContent = m.roundId;
+            setMarketsEnabled(true); tick();
+            log(`— round ${m.roundId} open —`);
+            break;
+          case 'bet': {
+            const mine = m.playerId === me;
+            log(`${mine ? 'You' : m.playerId} bet <b>${m.amount}</b> on ${m.betType}`, mine ? 'mine' : '');
+            break;
+          }
+          case 'betAck':
+            if (!m.ok) log(`bet rejected: ${m.error}`, 'lose');
+            else if (m.balance != null) $('balance').textContent = m.balance;
+            break;
+          case 'locked':
+            phase = 'locked'; setMarketsEnabled(false);
+            $('phase').firstChild.textContent = 'No more bets — dealing…';
+            break;
+          case 'settled': {
+            phase = 'settled';
+            renderHand('player', m.player); renderHand('banker', m.banker);
+            $('handPlayer').classList.toggle('win', m.outcome === 'player');
+            $('handBanker').classList.toggle('win', m.outcome === 'banker');
+            $('phase').firstChild.textContent =
+              m.outcome === 'tie' ? 'TIE' : `${m.outcome.toUpperCase()} wins`;
+            const mine = m.settled.filter((s) => s.playerId === me);
+            for (const s of mine) {
+              const cls = s.won === undefined ? 'push' : s.won ? 'win' : 'lose';
+              const tag = s.won === undefined ? 'push' : s.won ? 'won' : 'lost';
+              log(`Your ${s.betType} bet ${tag} <b>${s.net >= 0 ? '+' : ''}${s.net}</b>`, cls);
+            }
+            renderRoadmap(m.roadmap);
+            break;
+          }
+          case 'balance':
+            $('balance').textContent = m.balance; break;
+          case 'error':
+            log(`error: ${m.message}`, 'lose'); break;
+        }
+      };
+      ws.onclose = () => { $('phase').firstChild.textContent = 'Disconnected'; setMarketsEnabled(false); };
+
+      // Forget this account and reload as a brand-new player (demo helper).
+      $('newAccount').onclick = () => { localStorage.removeItem(TOKEN_KEY); location.reload(); };
+
+      setInterval(tick, 250);
+    </script>
+  </body>
+</html>

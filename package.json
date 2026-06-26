@@ -1,0 +1,19 @@
+{
+  "name": "social-casino-baccarat-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Server-authoritative baccarat game engine (prototype)",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "demo": "node src/demo.ts",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "pg": "^8.22.0",
+    "ws": "^8.21.0"
+  }
+}

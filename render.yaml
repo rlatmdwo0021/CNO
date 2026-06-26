@@ -1,0 +1,28 @@
+# Render Blueprint — deploys the baccarat backend (WebSocket + API) plus a
+# managed Postgres database, all on the free tier.
+#
+# Everything is driven by env vars, so moving to Railway/Fly later is just a
+# redeploy with DATABASE_URL pointed at the new database.
+
+databases:
+  - name: baccarat-db
+    plan: free
+
+services:
+  - type: web
+    name: baccarat
+    runtime: node
+    plan: free
+    region: singapore # closest Render region to Korea
+    buildCommand: npm install
+    startCommand: node src/server.ts
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "24.15.0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: baccarat-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "true"
