@@ -12,6 +12,65 @@ const goldColor = Color(0xFFFFD76B);
 Color outcomeColor(String o) =>
     o == 'player' ? playerColor : (o == 'banker' ? bankerColor : tieColor);
 
+/// Format an integer with thousands separators (e.g. 12000 -> "12,000").
+String fmtCoins(int n) {
+  final s = n.abs().toString();
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+    buf.write(s[i]);
+  }
+  return (n < 0 ? '-' : '') + buf.toString();
+}
+
+/// Free (gold) + paid (diamond) coin balances, side by side.
+class CoinBar extends StatelessWidget {
+  final int gold;
+  final int diamond;
+  final bool compact;
+  const CoinBar({super.key, required this.gold, required this.diamond, this.compact = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final size = compact ? 13.0 : 15.0;
+    Widget coin(String emoji, int v, Color c) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(emoji, style: TextStyle(fontSize: size)),
+            const SizedBox(width: 3),
+            Text(fmtCoins(v),
+                style: TextStyle(fontSize: size, fontWeight: FontWeight.bold, color: c)),
+          ],
+        );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        coin('🪙', gold, goldColor),
+        const SizedBox(width: 12),
+        coin('💎', diamond, const Color(0xFF6BD4F0)),
+      ],
+    );
+  }
+}
+
+/// Small player grade badge (placeholder tier for now).
+class GradeBadge extends StatelessWidget {
+  final String grade;
+  const GradeBadge(this.grade, {super.key});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF7A5230),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text('🥉 $grade',
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
+    );
+  }
+}
+
 /// A single playing card with a gentle pop-in animation.
 class PlayingCardWidget extends StatelessWidget {
   final CardView card;

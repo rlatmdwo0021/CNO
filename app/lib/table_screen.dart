@@ -92,14 +92,12 @@ class _TableScreenState extends State<TableScreen> {
             children: [
               Text('🃏 ${s.roomName}',
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text('한도 ${s.minBet}~${s.maxBet} · $connText',
+              Text('한도 ${fmtCoins(s.minBet)}~${fmtCoins(s.maxBet)} · $connText',
                   style: const TextStyle(fontSize: 11, color: Colors.white70)),
             ],
           ),
         ),
-        Text('${s.balance}',
-            style: const TextStyle(
-                fontSize: 24, fontWeight: FontWeight.bold, color: goldColor)),
+        CoinBar(gold: s.gold, diamond: s.diamond, compact: true),
       ],
     );
   }

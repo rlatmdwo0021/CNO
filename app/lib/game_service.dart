@@ -25,7 +25,7 @@ String resolveServerUrl() {
 
 enum Conn { connecting, online, offline }
 
-enum AppView { lobby, rooms, table }
+enum AppView { lobby, table }
 
 /// Holds all client state and talks the WebSocket protocol. Widgets listen via
 /// [ChangeNotifier]; the UI never touches the socket directly.
@@ -41,7 +41,9 @@ class GameService extends ChangeNotifier {
 
   String? playerId;
   String name = '';
-  int balance = 0;
+  String grade = '브론즈';
+  int gold = 0; // free coins — the betting currency
+  int diamond = 0; // paid coins — 0 until the payment system exists
   int minBet = 10;
   int maxBet = 500;
 
@@ -142,15 +144,10 @@ class GameService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- lobby / rooms navigation ---
-  void selectGame(String gameId) {
-    rooms = [];
-    view = AppView.rooms;
-    notifyListeners();
-    _send({'t': 'listRooms', 'gameId': gameId});
+  // --- rooms (the lobby browses rooms directly via the 바카라 tab) ---
+  void refreshRooms() {
+    if (conn == Conn.online) _send({'t': 'listRooms', 'gameId': 'baccarat'});
   }
-
-  void refreshRooms() => _send({'t': 'listRooms', 'gameId': 'baccarat'});
 
   void joinRoom(String id) {
     if (conn != Conn.online) return;
@@ -166,16 +163,6 @@ class GameService extends ChangeNotifier {
     banker = null;
     outcome = null;
     feed.clear();
-    view = AppView.rooms;
-    notifyListeners();
-    refreshRooms();
-  }
-
-  void backToLobby() {
-    if (roomId != null) {
-      _send({'t': 'leaveRoom'});
-      roomId = null;
-    }
     view = AppView.lobby;
     notifyListeners();
   }
@@ -200,7 +187,9 @@ class GameService extends ChangeNotifier {
         authError = null;
         playerId = m['playerId'] as String;
         name = m['name'] as String;
-        balance = m['balance'] as int;
+        grade = (m['grade'] ?? '브론즈') as String;
+        gold = m['gold'] as int;
+        diamond = (m['diamond'] ?? 0) as int;
         games = (m['games'] as List).map((g) => GameInfo.fromJson(g as Map<String, dynamic>)).toList();
         view = AppView.lobby;
         roomId = null;
@@ -245,7 +234,7 @@ class GameService extends ChangeNotifier {
         break;
       case 'betAck':
         if (m['ok'] == true) {
-          if (m['balance'] != null) balance = m['balance'] as int;
+          if (m['balance'] != null) gold = m['balance'] as int;
         } else {
           _log('베팅 거절: ${m['error']}');
         }
@@ -269,7 +258,8 @@ class GameService extends ChangeNotifier {
         }
         break;
       case 'balance':
-        balance = m['balance'] as int;
+        gold = (m['gold'] ?? gold) as int;
+        diamond = (m['diamond'] ?? diamond) as int;
         break;
     }
     notifyListeners();

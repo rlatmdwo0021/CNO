@@ -95,7 +95,9 @@ export interface SessionMsg {
   name: string;
   /** Present only right after register/login — kept in memory for reconnect. */
   token?: string;
-  balance: number;
+  grade: string; // placeholder tier (e.g. 브론즈) until grades are designed
+  gold: number; // free coins (the betting currency)
+  diamond: number; // paid coins (0 until the payment system exists)
   games: GameInfo[];
 }
 export interface AuthErrorMsg {
@@ -157,7 +159,8 @@ export interface SettledMsg {
 /** Per-recipient balance update (sent privately after settlement). */
 export interface BalanceMsg {
   t: 'balance';
-  balance: number;
+  gold: number;
+  diamond: number;
 }
 export interface ErrorMsg {
   t: 'error';

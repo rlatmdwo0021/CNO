@@ -73,8 +73,9 @@ const auth = new AuthService(await createAccountStore());
 const GAMES: GameInfo[] = [
   { id: 'baccarat', name: '바카라', status: 'live' },
   { id: 'slots', name: '슬롯', status: 'soon' },
-  { id: 'blackjack', name: '블랙잭', status: 'soon' },
+  { id: 'roulette', name: '룰렛', status: 'soon' },
 ];
+const GRADE_PLACEHOLDER = '브론즈';
 
 // Fixed preset rooms by betting limit. Each is an independent table/loop/shoe.
 const ROOM_CONFIGS = [
@@ -172,7 +173,7 @@ function wireRoom(room: Room): void {
     });
     for (const ws of room.subscribers) {
       const playerId = clients.get(ws);
-      if (playerId) send(ws, { t: 'balance', balance: await wallet.getBalance(playerId) });
+      if (playerId) send(ws, { t: 'balance', gold: await wallet.getBalance(playerId), diamond: 0 });
     }
   });
 }
@@ -268,7 +269,9 @@ async function startSession(ws: WebSocket, playerId: string, name: string, token
     playerId,
     name,
     token,
-    balance: await wallet.getBalance(playerId),
+    grade: GRADE_PLACEHOLDER,
+    gold: await wallet.getBalance(playerId),
+    diamond: 0,
     games: GAMES,
   });
 }

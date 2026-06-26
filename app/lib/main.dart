@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'auth_screen.dart';
 import 'game_service.dart';
 import 'lobby_screen.dart';
-import 'room_list_screen.dart';
 import 'table_screen.dart';
 import 'widgets.dart';
 
@@ -35,8 +34,6 @@ class BaccaratApp extends StatelessWidget {
           switch (service.view) {
             case AppView.lobby:
               return LobbyScreen(service);
-            case AppView.rooms:
-              return RoomListScreen(service);
             case AppView.table:
               return TableScreen(service);
           }
