@@ -7,13 +7,14 @@
 databases:
   - name: baccarat-db
     plan: free
+    region: oregon # must match the web service's region (internal DB DNS is per-region)
 
 services:
   - type: web
     name: baccarat
     runtime: node
     plan: free
-    region: singapore # closest Render region to Korea
+    region: oregon # same region as the database
     buildCommand: npm install
     startCommand: node src/server.ts
     healthCheckPath: /healthz
